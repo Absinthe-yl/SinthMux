@@ -1,73 +1,101 @@
 # SinthMux
 
-SinthMux 是一个面向个人与小团队的公网多主机持久终端工作台。用户在自己的电脑、Linux 主机或云服务器上安装 Agent，Agent 主动连接公网 Hub；随后可从电脑、手机或平板浏览器集中管理各主机上的 tmux 会话。
+**从一个浏览器查看多台机器上的 tmux 会话。**
 
-当前阶段：Hub 可通过 Agent 出站连接查询远端 tmux 会话，Web 控制台可查看各设备的会话列表。
+SinthMux 是一个面向个人和小团队的多主机终端工作台。每台机器上的 Agent 主动连接 Hub，因此设备可以位于 NAT 或防火墙后面，无需为 Agent 开放入站端口。项目的目标是在浏览器中管理、连接和恢复各机器上的持久 tmux 会话。
 
-## 核心目标
+> **项目状态：早期开发。** 当前已打通设备注册、心跳和远程 tmux 会话列表查询。浏览器终端、会话管理和正式认证仍在开发中；请勿将当前版本直接部署到公网。
 
-- 一个 Hub 管理多台位于 NAT、防火墙或不同网络后的主机。
-- 远程主机只建立出站连接，不开放 SSH 或 Agent 公网端口。
-- 浏览器可以创建、恢复、切换和操作持久 tmux 会话。
-- 支持桌面、手机和平板，并在网络切换后自动恢复终端。
-- 默认采用短期凭据、设备身份、细粒度授权和安全审计。
-- 形成适合软件工程本科毕设的完整系统、实验和论文材料。
+## 当前可以做什么
 
-## 已确定方案
+| 功能 | 状态 |
+| --- | --- |
+| Agent 主动连接 Hub，设备上线、心跳与离线状态 | 已实现 |
+| Web 查看设备、平台、Agent 版本和在线状态 | 已实现 |
+| Web 查看指定设备的 tmux 会话列表 | 已实现 |
+| 创建、重命名、关闭 tmux 会话 | 计划中 |
+| 在浏览器中连接和恢复终端 | 计划中 |
+| 设备配对、mTLS 与浏览器认证 | 计划中 |
 
-```text
-Browser / PWA
-      | HTTPS + WSS
-      v
-SinthMux Hub
-      | mTLS WebSocket (Agent outbound connection)
-      v
-SinthMux Agent
-      | structured argv / PTY
-      v
-tmux sessions
-```
+## 快速开始
 
-技术栈：
-
-- Hub：Go、Chi、Coder WebSocket、PostgreSQL、Redis（按规模启用）。
-- Agent：Go 单文件程序，systemd/launchd 托管。
-- Web：React、TypeScript、Vite、TanStack Query、xterm.js、PWA。
-- 协议：Protobuf 定义，控制消息走 JSON/Protobuf envelope，终端数据走二进制帧。
-- 部署：Docker Compose + Caddy，公网统一使用 TLS 1.3 和 TCP 443。
-
-详细方案见 [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) 和 [docs/adr/0001-connection-architecture.md](docs/adr/0001-connection-architecture.md)。
-
-## 本地启动
-
-要求 Go 1.25+、Node.js 20+ 和 npm。
+开发环境需要 **Go 1.25+、Node.js 20+、npm 和 tmux**。Agent 所在机器需安装 tmux；当前示例在同一台机器上运行所有组件。
 
 ```bash
-npm --prefix apps/web install
+git clone https://github.com/Absinthe-yl/SinthMux.git
+cd SinthMux
 go mod download
+npm --prefix apps/web install
 ```
 
-分别启动三个进程：
+在三个终端分别运行：
 
 ```bash
 make dev-hub
+```
+
+```bash
 make dev-agent
+```
+
+```bash
 make dev-web
 ```
 
-打开 `http://127.0.0.1:5173`。开发 Agent 会通过出站 WebSocket 注册到 Hub，并出现在设备列表中。
-点击设备的“查看会话”会调用 `GET /api/v1/devices/{deviceId}/sessions`。Hub 发送带 requestId 的 `tmux.sessions.list` RPC，Agent 使用本机运行用户的 tmux 查询会话。没有会话时返回空列表；Agent 离线或 RPC 超时时返回相应错误。创建会话和终端流尚未实现。
+打开 [http://127.0.0.1:5173](http://127.0.0.1:5173)，在设备列表中点击 **查看会话**。如果还没有 tmux 会话，可以在运行 Agent 的机器上执行：
 
-> 当前 `SINTHMUX_DEV_TOKEN` 只用于本地框架联调。正式开发将按 ADR 替换为一次性配对码和 mTLS 设备证书。
+```bash
+tmux new-session -d -s demo
+```
 
-## 调研来源
+然后在 Web 页面重新打开该设备的会话列表。也可以直接调用 API：
 
-- [ShellHub](https://github.com/shellhub-io/shellhub)
-- [MeshCentral](https://github.com/Ylianst/MeshCentral)
-- [Nexterm](https://github.com/gnmyt/Nexterm)
-- [sshx](https://github.com/ekzhang/sshx)
-- [TermPair](https://github.com/cs01/termpair)
-- [ttyd](https://github.com/tsl0922/ttyd)
-- [Teleport](https://github.com/gravitational/teleport)
-- [Apache Guacamole](https://github.com/apache/guacamole-client)
-- [OWASP WebSocket Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/WebSocket_Security_Cheat_Sheet.html)
+```bash
+curl http://127.0.0.1:8090/api/v1/devices/local-dev/sessions
+```
+
+Hub 默认监听 `127.0.0.1:8090`，Web 开发服务器默认使用 `5173` 端口。Agent 的设备 ID、名称及连接地址可通过 `SINTHMUX_AGENT_DEVICE_ID`、`SINTHMUX_AGENT_NAME` 和 `SINTHMUX_AGENT_HUB_URL` 配置，示例见 [`.env.example`](.env.example)。
+
+> 当前 Agent 连接使用共享开发 Token，浏览器 API 尚无正式认证。该 Token 仅用于本地联调；不要把开发服务或 Hub 暴露到公网。
+
+## 工作方式
+
+```text
+Browser ── HTTP ──▶ Hub ── WebSocket RPC ──▶ Agent ──▶ tmux
+                    ▲                       │
+                    └────── 主动出站连接 ────┘
+```
+
+1. Agent 主动连接 Hub，报告设备信息并定期发送心跳。
+2. 浏览器请求 `GET /api/v1/devices/{deviceId}/sessions`。
+3. Hub 向对应 Agent 发送带 `requestId` 的 `tmux.sessions.list` RPC，并等待响应或超时。
+4. Agent 使用参数数组执行 `tmux list-sessions`，返回会话名称、窗口数、连接状态和创建时间。
+
+当前控制消息采用 JSON envelope；[Protobuf 协议草案](proto/sinthmux/v1/agent.proto)已定义但尚未接入运行链路。正式公网方案中的 TLS、设备配对和 mTLS 见[架构决策](docs/adr/0001-connection-architecture.md)。
+
+## 开发与验证
+
+```bash
+make test   # Go 测试与 Web 类型检查
+make build  # Go 构建与 Web 生产构建
+make proto  # 验证 Protobuf 定义
+```
+
+Hub 与 Agent 的 RPC 集成测试覆盖正常返回、Agent 离线、超时、非法响应和重复 requestId。项目目录：
+
+```text
+apps/hub/          Hub 入口与 HTTP API
+apps/agent/        出站 Agent 与 tmux 查询
+apps/web/          React 控制台
+internal/devices/  设备状态注册表
+internal/relay/    Agent 连接与 RPC 管理
+pkg/protocol/      当前 JSON 消息结构
+proto/             Protobuf 协议草案
+docs/              实现方案与架构决策
+```
+
+## 路线图与文档
+
+下一步是会话创建、重命名和关闭，再实现浏览器 PTY 终端流。随后补齐设备配对、短期证书、浏览器认证和持久化。完整任务顺序见[实现方案](docs/IMPLEMENTATION_PLAN.md)。
+
+项目在设计阶段参考了 [ShellHub](https://github.com/shellhub-io/shellhub) 的 Agent 与网关拓扑、[MeshCentral](https://github.com/Ylianst/MeshCentral) 的设备生命周期，以及 [ttyd](https://github.com/tsl0922/ttyd) 的浏览器终端经验。SinthMux 为独立实现。
