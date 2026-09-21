@@ -23,7 +23,7 @@ func main() {
 	manager := relay.NewManager()
 
 	router := chi.NewRouter()
-	router.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer, middleware.Timeout(30*time.Second))
+	router.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer)
 	router.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "service": "sinthmux-hub", "version": version})
 	})
