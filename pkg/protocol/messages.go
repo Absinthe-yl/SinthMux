@@ -1,6 +1,9 @@
 package protocol
 
-import "time"
+import (
+	"regexp"
+	"time"
+)
 
 const Version uint32 = 1
 
@@ -51,13 +54,23 @@ type Error struct {
 }
 
 type RPCRequest struct {
-	Method string `json:"method"`
+	Method  string `json:"method"`
+	Name    string `json:"name,omitempty"`
+	NewName string `json:"newName,omitempty"`
 }
 
 type RPCResponse struct {
-	OK       bool          `json:"ok"`
-	Sessions []TmuxSession `json:"sessions,omitempty"`
-	Error    string        `json:"error,omitempty"`
+	OK        bool          `json:"ok"`
+	Sessions  []TmuxSession `json:"sessions,omitempty"`
+	Error     string        `json:"error,omitempty"`
+	ErrorCode string        `json:"errorCode,omitempty"`
+	Name      string        `json:"name,omitempty"`
+}
+
+var sessionNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+
+func ValidSessionName(name string) bool {
+	return sessionNamePattern.MatchString(name)
 }
 
 type TmuxSession struct {

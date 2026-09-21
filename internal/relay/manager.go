@@ -87,15 +87,15 @@ func (m *Manager) Unregister(id string, agent *agentConnection) bool {
 	return true
 }
 
-func (m *Manager) Call(ctx context.Context, deviceID, method string) (*protocol.RPCResponse, error) {
+func (m *Manager) Call(ctx context.Context, deviceID string, request protocol.RPCRequest) (*protocol.RPCResponse, error) {
 	idBytes := make([]byte, 16)
 	if _, err := rand.Read(idBytes); err != nil {
 		return nil, err
 	}
-	return m.callWithID(ctx, deviceID, hex.EncodeToString(idBytes), method)
+	return m.callWithID(ctx, deviceID, hex.EncodeToString(idBytes), request)
 }
 
-func (m *Manager) callWithID(ctx context.Context, deviceID, requestID, method string) (*protocol.RPCResponse, error) {
+func (m *Manager) callWithID(ctx context.Context, deviceID, requestID string, request protocol.RPCRequest) (*protocol.RPCResponse, error) {
 	m.mu.RLock()
 	agent := m.agents[deviceID]
 	if agent == nil {
@@ -120,7 +120,7 @@ func (m *Manager) callWithID(ctx context.Context, deviceID, requestID, method st
 	}
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	if err := writeEnvelope(callCtx, agent.conn, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageRPCRequest, RequestID: requestID, Request: &protocol.RPCRequest{Method: method}}); err != nil {
+	if err := writeEnvelope(callCtx, agent.conn, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageRPCRequest, RequestID: requestID, Request: &request}); err != nil {
 		return nil, err
 	}
 	select {

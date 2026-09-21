@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,7 +12,6 @@ import (
 	"github.com/sinthmux/sinthmux/internal/config"
 	"github.com/sinthmux/sinthmux/internal/devices"
 	"github.com/sinthmux/sinthmux/internal/relay"
-	"github.com/sinthmux/sinthmux/pkg/protocol"
 )
 
 const version = "0.0.1-dev"
@@ -35,29 +33,11 @@ func main() {
 	router.Get("/api/v1/devices", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"devices": registry.List()})
 	})
-	router.Get("/api/v1/devices/{deviceId}/sessions", func(w http.ResponseWriter, r *http.Request) {
-		response, err := manager.Call(r.Context(), chi.URLParam(r, "deviceId"), "tmux.sessions.list")
-		if err != nil {
-			status := http.StatusBadGateway
-			switch {
-			case errors.Is(err, relay.ErrOffline):
-				status = http.StatusServiceUnavailable
-			case errors.Is(err, relay.ErrTimeout):
-				status = http.StatusGatewayTimeout
-			}
-			writeJSON(w, status, map[string]string{"error": err.Error()})
-			return
-		}
-		if !response.OK {
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": response.Error})
-			return
-		}
-		sessions := response.Sessions
-		if sessions == nil {
-			sessions = []protocol.TmuxSession{}
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
-	})
+	sessionAPI := sessionHandler{manager: manager}
+	router.Get("/api/v1/devices/{deviceId}/sessions", sessionAPI.list)
+	router.Post("/api/v1/devices/{deviceId}/sessions", sessionAPI.create)
+	router.Patch("/api/v1/devices/{deviceId}/sessions/{sessionName}", sessionAPI.rename)
+	router.Delete("/api/v1/devices/{deviceId}/sessions/{sessionName}", sessionAPI.close)
 	router.Handle("/ws/v1/agents/connect", relay.AgentHandler{Registry: registry, Manager: manager, DevToken: settings.DevToken})
 
 	server := &http.Server{Addr: settings.Address, Handler: router, ReadHeaderTimeout: 5 * time.Second}

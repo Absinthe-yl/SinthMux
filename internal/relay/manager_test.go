@@ -61,7 +61,7 @@ func TestRPCNormal(t *testing.T) {
 	manager, conn := connectedAgent(t)
 	result := make(chan *protocol.RPCResponse, 1)
 	go func() {
-		response, _ := manager.Call(context.Background(), "device-1", "tmux.sessions.list")
+		response, _ := manager.Call(context.Background(), "device-1", protocol.RPCRequest{Method: "tmux.sessions.list"})
 		result <- response
 	}()
 	request := readRequest(t, conn)
@@ -81,7 +81,7 @@ func TestRPCNormal(t *testing.T) {
 
 func TestRPCOffline(t *testing.T) {
 	manager := NewManager()
-	_, err := manager.Call(context.Background(), "missing", "tmux.sessions.list")
+	_, err := manager.Call(context.Background(), "missing", protocol.RPCRequest{Method: "tmux.sessions.list"})
 	if !errors.Is(err, ErrOffline) {
 		t.Fatalf("got %v", err)
 	}
@@ -91,7 +91,10 @@ func TestRPCTimeout(t *testing.T) {
 	manager, conn := connectedAgent(t)
 	manager.Timeout = 50 * time.Millisecond
 	result := make(chan error, 1)
-	go func() { _, err := manager.Call(context.Background(), "device-1", "tmux.sessions.list"); result <- err }()
+	go func() {
+		_, err := manager.Call(context.Background(), "device-1", protocol.RPCRequest{Method: "tmux.sessions.list"})
+		result <- err
+	}()
 	readRequest(t, conn)
 	if err := <-result; !errors.Is(err, ErrTimeout) {
 		t.Fatalf("got %v", err)
@@ -101,7 +104,10 @@ func TestRPCTimeout(t *testing.T) {
 func TestRPCInvalidResponse(t *testing.T) {
 	manager, conn := connectedAgent(t)
 	result := make(chan error, 1)
-	go func() { _, err := manager.Call(context.Background(), "device-1", "tmux.sessions.list"); result <- err }()
+	go func() {
+		_, err := manager.Call(context.Background(), "device-1", protocol.RPCRequest{Method: "tmux.sessions.list"})
+		result <- err
+	}()
 	request := readRequest(t, conn)
 	if err := writeEnvelope(context.Background(), conn, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageRPCResponse, RequestID: request.RequestID}); err != nil {
 		t.Fatal(err)
@@ -115,11 +121,11 @@ func TestRPCDuplicateRequestID(t *testing.T) {
 	manager, conn := connectedAgent(t)
 	result := make(chan error, 1)
 	go func() {
-		_, err := manager.callWithID(context.Background(), "device-1", "same-id", "tmux.sessions.list")
+		_, err := manager.callWithID(context.Background(), "device-1", "same-id", protocol.RPCRequest{Method: "tmux.sessions.list"})
 		result <- err
 	}()
 	readRequest(t, conn)
-	_, err := manager.callWithID(context.Background(), "device-1", "same-id", "tmux.sessions.list")
+	_, err := manager.callWithID(context.Background(), "device-1", "same-id", protocol.RPCRequest{Method: "tmux.sessions.list"})
 	if !errors.Is(err, ErrDuplicateRequest) {
 		t.Fatalf("got %v", err)
 	}
