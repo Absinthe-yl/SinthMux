@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package sinthmux.v1;
+
+option go_package = "github.com/sinthmux/sinthmux/pkg/protocol/v1;protocolv1";
+
+import "google/protobuf/timestamp.proto";
+
+message Envelope {
+  uint32 version = 1;
+  string request_id = 2;
+  oneof body {
+    AgentHello hello = 10;
+    Heartbeat heartbeat = 11;
+    RpcRequest request = 12;
+    RpcResponse response = 13;
+    StreamOpen stream_open = 14;
+    StreamData stream_data = 15;
+    StreamClose stream_close = 16;
+    AgentEvent event = 17;
+  }
+}
+
+message AgentHello {
+  string device_id = 1;
+  string name = 2;
+  string platform = 3;
+  string architecture = 4;
+  string agent_version = 5;
+  repeated string capabilities = 6;
+}
+
+message Heartbeat {
+  string device_id = 1;
+  google.protobuf.Timestamp sent_at = 2;
+}
+
+message RpcRequest { string method = 1; bytes payload = 2; }
+message RpcResponse { bool ok = 1; bytes payload = 2; string error = 3; }
+message StreamOpen { string stream_id = 1; string kind = 2; bytes metadata = 3; }
+message StreamData { string stream_id = 1; uint64 sequence = 2; bytes payload = 3; }
+message StreamClose { string stream_id = 1; string reason = 2; }
+message AgentEvent { string name = 1; bytes payload = 2; }
