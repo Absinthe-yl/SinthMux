@@ -10,24 +10,32 @@ const Version uint32 = 1
 type MessageType string
 
 const (
-	MessageAgentHello  MessageType = "agent.hello"
-	MessageHeartbeat   MessageType = "agent.heartbeat"
-	MessageAck         MessageType = "hub.ack"
-	MessageError       MessageType = "hub.error"
-	MessageRPCRequest  MessageType = "rpc.request"
-	MessageRPCResponse MessageType = "rpc.response"
+	MessageAgentHello   MessageType = "agent.hello"
+	MessageHeartbeat    MessageType = "agent.heartbeat"
+	MessageAck          MessageType = "hub.ack"
+	MessageError        MessageType = "hub.error"
+	MessageRPCRequest   MessageType = "rpc.request"
+	MessageRPCResponse  MessageType = "rpc.response"
+	MessageStreamOpen   MessageType = "stream.open"
+	MessageStreamData   MessageType = "stream.data"
+	MessageStreamResize MessageType = "stream.resize"
+	MessageStreamClose  MessageType = "stream.close"
 )
 
 type Envelope struct {
-	Version   uint32       `json:"version"`
-	Type      MessageType  `json:"type"`
-	RequestID string       `json:"requestId,omitempty"`
-	Hello     *AgentHello  `json:"hello,omitempty"`
-	Heartbeat *Heartbeat   `json:"heartbeat,omitempty"`
-	Ack       *Ack         `json:"ack,omitempty"`
-	Error     *Error       `json:"error,omitempty"`
-	Request   *RPCRequest  `json:"request,omitempty"`
-	Response  *RPCResponse `json:"response,omitempty"`
+	Version      uint32        `json:"version"`
+	Type         MessageType   `json:"type"`
+	RequestID    string        `json:"requestId,omitempty"`
+	Hello        *AgentHello   `json:"hello,omitempty"`
+	Heartbeat    *Heartbeat    `json:"heartbeat,omitempty"`
+	Ack          *Ack          `json:"ack,omitempty"`
+	Error        *Error        `json:"error,omitempty"`
+	Request      *RPCRequest   `json:"request,omitempty"`
+	Response     *RPCResponse  `json:"response,omitempty"`
+	StreamOpen   *StreamOpen   `json:"streamOpen,omitempty"`
+	StreamData   *StreamData   `json:"streamData,omitempty"`
+	StreamResize *StreamResize `json:"streamResize,omitempty"`
+	StreamClose  *StreamClose  `json:"streamClose,omitempty"`
 }
 
 type AgentHello struct {
@@ -78,4 +86,27 @@ type TmuxSession struct {
 	Windows   int    `json:"windows"`
 	Attached  bool   `json:"attached"`
 	CreatedAt int64  `json:"createdAt"`
+}
+
+type StreamOpen struct {
+	StreamID string `json:"streamId"`
+	Session  string `json:"session"`
+	Cols     uint16 `json:"cols"`
+	Rows     uint16 `json:"rows"`
+}
+
+type StreamData struct {
+	StreamID string `json:"streamId"`
+	Data     []byte `json:"data"`
+}
+
+type StreamResize struct {
+	StreamID string `json:"streamId"`
+	Cols     uint16 `json:"cols"`
+	Rows     uint16 `json:"rows"`
+}
+
+type StreamClose struct {
+	StreamID string `json:"streamId"`
+	Reason   string `json:"reason,omitempty"`
 }

@@ -64,7 +64,7 @@ func (h AgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			deviceID = envelope.Hello.DeviceID
 			agent = h.Manager.Register(deviceID, connection)
 			h.Registry.Connect(*envelope.Hello)
-			_ = writeEnvelope(ctx, connection, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageAck, Ack: &protocol.Ack{Message: "agent registered"}})
+			_ = agent.send(ctx, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageAck, Ack: &protocol.Ack{Message: "agent registered"}})
 		case protocol.MessageHeartbeat:
 			if agent != nil && envelope.Heartbeat != nil && envelope.Heartbeat.DeviceID == deviceID {
 				h.Registry.Touch(deviceID)
@@ -78,6 +78,10 @@ func (h AgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			agent.finish(envelope.RequestID, rpcResult{response: envelope.Response})
+		case protocol.MessageStreamData, protocol.MessageStreamClose:
+			if agent != nil && envelope.Version == protocol.Version {
+				agent.streamEvent(envelope)
+			}
 		default:
 			_ = writeEnvelope(ctx, connection, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageError, Error: &protocol.Error{Code: "unsupported_message", Message: string(envelope.Type)}})
 		}

@@ -18,6 +18,7 @@ message Envelope {
     StreamData stream_data = 15;
     StreamClose stream_close = 16;
     AgentEvent event = 17;
+    StreamResize stream_resize = 18;
   }
 }
 
@@ -40,4 +41,5 @@ message RpcResponse { bool ok = 1; bytes payload = 2; string error = 3; }
 message StreamOpen { string stream_id = 1; string kind = 2; bytes metadata = 3; }
 message StreamData { string stream_id = 1; uint64 sequence = 2; bytes payload = 3; }
 message StreamClose { string stream_id = 1; string reason = 2; }
+message StreamResize { string stream_id = 1; uint32 cols = 2; uint32 rows = 3; }
 message AgentEvent { string name = 1; bytes payload = 2; }

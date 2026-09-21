@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, Laptop, Moon, RefreshCw, Server, Sun } from "lucide-react";
-import { useLayoutEffect, useState } from "react";
+import { lazy, Suspense, useLayoutEffect, useState } from "react";
 import SessionPanel from "./SessionPanel";
+
+const TerminalView = lazy(() => import("./TerminalView"));
 
 type Device = {
   id: string;
@@ -29,7 +31,7 @@ async function getJSON<T>(path: string): Promise<T> {
   return response.json();
 }
 
-function DeviceCard({ device, expanded, onToggle }: { device: Device; expanded: boolean; onToggle: () => void }) {
+function DeviceCard({ device, expanded, onToggle, onOpen }: { device: Device; expanded: boolean; onToggle: () => void; onOpen: (session: string) => void }) {
   const online = device.status === "online";
   return <article className={`device-card${expanded ? " expanded" : ""}`}>
     <div className="device-main">
@@ -40,13 +42,14 @@ function DeviceCard({ device, expanded, onToggle }: { device: Device; expanded: 
       </div>
       <button className="device-toggle" type="button" aria-expanded={expanded} onClick={onToggle}>{expanded ? "收起" : "会话"}{expanded ? <ChevronUp /> : <ChevronDown />}</button>
     </div>
-    {expanded && <SessionPanel deviceId={device.id} online={online} canManage={device.capabilities.includes("tmux.sessions.manage")} />}
+    {expanded && <SessionPanel deviceId={device.id} online={online} canManage={device.capabilities.includes("tmux.sessions.manage")} onOpen={onOpen} />}
   </article>;
 }
 
 export default function App() {
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [selectedDevice, setSelectedDevice] = useState<string | null>(null);
+  const [activeTerminal, setActiveTerminal] = useState<{ deviceId: string; deviceName: string; session: string } | null>(null);
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = theme;
     try { localStorage.setItem("sinthmux-theme", theme); } catch { /* Theme still works for this visit. */ }
@@ -63,10 +66,12 @@ export default function App() {
       <div className="top-actions"><span className="hub-status"><span className={`status-dot${hubOnline ? " online" : ""}`} />Hub {hubOnline ? "在线" : status.isError ? "离线" : "连接中"}</span><button className="icon-button" type="button" title={theme === "dark" ? "切换浅色模式" : "切换深色模式"} aria-label={theme === "dark" ? "切换浅色模式" : "切换深色模式"} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? <Sun /> : <Moon />}</button></div>
     </div></header>
 
-    <main className="shell" id="top">
+    <main className={`shell${activeTerminal ? " terminal-shell" : ""}`} id="top">
+      {activeTerminal ? <Suspense fallback={<div className="session-note">正在打开终端…</div>}><TerminalView key={`${activeTerminal.deviceId}:${activeTerminal.session}`} {...activeTerminal} theme={theme} onBack={() => setActiveTerminal(null)} /></Suspense> : <>
       <div className="page-heading"><div><h1>设备 <span>{items.length}</span></h1></div><button className="refresh-button" type="button" onClick={() => { void status.refetch(); void devices.refetch(); }}><RefreshCw />刷新</button></div>
       {devices.isError && <div className="notice error">无法读取设备列表，请确认 Hub 已启动。</div>}
-      <section className="device-list" aria-label="设备列表">{items.length ? items.map((device) => <DeviceCard key={device.id} device={device} expanded={selectedDevice === device.id} onToggle={() => setSelectedDevice(selectedDevice === device.id ? null : device.id)} />) : !devices.isError && <div className="empty-state"><Server /><strong>{devices.isPending ? "正在加载设备" : "还没有设备"}</strong><span>{devices.isPending ? "" : "运行 Agent 后，设备会出现在这里。"}</span></div>}</section>
+      <section className="device-list" aria-label="设备列表">{items.length ? items.map((device) => <DeviceCard key={device.id} device={device} expanded={selectedDevice === device.id} onToggle={() => setSelectedDevice(selectedDevice === device.id ? null : device.id)} onOpen={(session) => setActiveTerminal({ deviceId: device.id, deviceName: device.name, session })} />) : !devices.isError && <div className="empty-state"><Server /><strong>{devices.isPending ? "正在加载设备" : "还没有设备"}</strong><span>{devices.isPending ? "" : "运行 Agent 后，设备会出现在这里。"}</span></div>}</section>
+      </>}
     </main>
   </div>;
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -42,9 +43,17 @@ func run(ctx context.Context, settings config.Agent, logger *slog.Logger) error 
 	}
 	defer connection.CloseNow()
 	connection.SetReadLimit(64 << 10)
+	var writeMu sync.Mutex
+	send := func(envelope protocol.Envelope) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return write(ctx, connection, envelope)
+	}
+	streams := newTerminalStreams(send)
+	defer streams.closeAll()
 
-	hello := protocol.Envelope{Version: protocol.Version, Type: protocol.MessageAgentHello, Hello: &protocol.AgentHello{DeviceID: settings.DeviceID, Name: settings.Name, Platform: runtime.GOOS, Architecture: runtime.GOARCH, AgentVersion: version, Capabilities: []string{"device.info", "tmux.sessions.list", "tmux.sessions.manage", "terminal.stream.placeholder"}}}
-	if err := write(ctx, connection, hello); err != nil {
+	hello := protocol.Envelope{Version: protocol.Version, Type: protocol.MessageAgentHello, Hello: &protocol.AgentHello{DeviceID: settings.DeviceID, Name: settings.Name, Platform: runtime.GOOS, Architecture: runtime.GOARCH, AgentVersion: version, Capabilities: []string{"device.info", "tmux.sessions.list", "tmux.sessions.manage", "terminal.stream"}}}
+	if err := send(hello); err != nil {
 		return err
 	}
 	logger.Info("agent connected", "hub", settings.HubURL, "deviceId", settings.DeviceID)
@@ -61,13 +70,26 @@ func run(ctx context.Context, settings config.Agent, logger *slog.Logger) error 
 				continue
 			}
 			var envelope protocol.Envelope
-			if json.Unmarshal(payload, &envelope) != nil || envelope.Type != protocol.MessageRPCRequest {
+			if json.Unmarshal(payload, &envelope) != nil || envelope.Version != protocol.Version {
 				continue
 			}
-			response := handleRPC(ctx, envelope)
-			if err := write(ctx, connection, response); err != nil {
-				readErrors <- err
-				return
+			switch envelope.Type {
+			case protocol.MessageRPCRequest:
+				response := handleRPC(ctx, envelope)
+				if err := send(response); err != nil {
+					readErrors <- err
+					return
+				}
+			case protocol.MessageStreamOpen:
+				streams.open(envelope.StreamOpen)
+			case protocol.MessageStreamData:
+				streams.input(envelope.StreamData)
+			case protocol.MessageStreamResize:
+				streams.resize(envelope.StreamResize)
+			case protocol.MessageStreamClose:
+				if envelope.StreamClose != nil {
+					streams.close(envelope.StreamClose.StreamID)
+				}
 			}
 		}
 	}()
@@ -79,7 +101,7 @@ func run(ctx context.Context, settings config.Agent, logger *slog.Logger) error 
 		case err := <-readErrors:
 			return err
 		case <-ticker.C:
-			if err := write(ctx, connection, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageHeartbeat, Heartbeat: &protocol.Heartbeat{DeviceID: settings.DeviceID, SentAt: time.Now().UTC()}}); err != nil {
+			if err := send(protocol.Envelope{Version: protocol.Version, Type: protocol.MessageHeartbeat, Heartbeat: &protocol.Heartbeat{DeviceID: settings.DeviceID, SentAt: time.Now().UTC()}}); err != nil {
 				return err
 			}
 		}

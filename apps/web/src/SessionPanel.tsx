@@ -17,7 +17,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.status === 204 ? undefined as T : response.json();
 }
 
-export default function SessionPanel({ deviceId, online, canManage }: { deviceId: string; online: boolean; canManage: boolean }) {
+export default function SessionPanel({ deviceId, online, canManage, onOpen }: { deviceId: string; online: boolean; canManage: boolean; onOpen: (session: string) => void }) {
   const queryClient = useQueryClient();
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -70,7 +70,7 @@ export default function SessionPanel({ deviceId, online, canManage }: { deviceId
     {inputError && <div className="notice error">{inputError}</div>}
     {action.isError && <div className="notice error">操作失败：{action.error.message}</div>}
     {sessions.isPending ? <p className="session-note">正在读取会话…</p> : sessions.isError ? <div className="notice error">读取失败：{sessions.error.message} <button className="text-button" type="button" onClick={() => sessions.refetch()}>重试</button></div> : sessions.data.sessions.length === 0 ? <p className="session-note empty-sessions">暂无会话</p> : <ul className="session-list">{sessions.data.sessions.map((session) => <li className="session-row" key={session.name}>
-      <Terminal className="terminal-icon" aria-hidden="true" /><div className="session-info"><strong>{session.name}</strong><span>{session.windows} 个窗口{session.attached ? " · 已连接" : ""}</span></div>
+      <Terminal className="terminal-icon" aria-hidden="true" /><button className="session-open" type="button" disabled={!online} onClick={() => onOpen(session.name)}><span className="session-info"><strong>{session.name}</strong><span>{session.windows} 个窗口{session.attached ? " · 已连接" : ""}</span></span><span className="session-enter">进入</span></button>
       {online && canManage && <div className="session-actions"><button type="button" title={`重命名 ${session.name}`} aria-label={`重命名 ${session.name}`} disabled={action.isPending} onClick={() => { setRenaming(session.name); setRenameName(session.name); setInputError(""); action.reset(); }}><Pencil /></button><button type="button" className="delete-button" title={`关闭 ${session.name}`} aria-label={`关闭 ${session.name}`} disabled={action.isPending} onClick={() => close(session.name)}><Trash2 /></button></div>}
       {renaming === session.name && <form className="session-form rename-form" onSubmit={rename}><label className="sr-only" htmlFor={`rename-${deviceId}-${session.name}`}>新的会话名称</label><input id={`rename-${deviceId}-${session.name}`} autoFocus value={renameName} maxLength={64} onChange={(event) => setRenameName(event.target.value)} disabled={action.isPending} /><button type="submit" disabled={action.isPending}>保存</button><button type="button" className="subtle-button" onClick={() => setRenaming(null)}>取消</button></form>}
     </li>)}</ul>}
