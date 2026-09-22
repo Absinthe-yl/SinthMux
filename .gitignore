@@ -7,3 +7,4 @@ dist/
 *.tsbuildinfo
 apps/web/node_modules/
 apps/web/dist/
+docs/

@@ -73,7 +73,7 @@ Browser ── HTTP ──▶ Hub ── WebSocket RPC ──▶ Agent ──▶
 4. Agent 使用参数数组执行 tmux 命令，返回会话结果。
 5. 浏览器请求 45 秒一次性票据，通过 WebSocket 附着 tmux；Agent 用 PTY 转发输入、输出和窗口尺寸。
 
-当前控制消息采用 JSON envelope；[Protobuf 协议草案](proto/sinthmux/v1/agent.proto)已定义但尚未接入运行链路。正式公网方案中的 TLS、设备配对和 mTLS 见[架构决策](docs/adr/0001-connection-architecture.md)。
+当前控制消息采用 JSON envelope；[Protobuf 协议草案](proto/sinthmux/v1/agent.proto)已定义但尚未接入运行链路。正式公网方案仍需实现 TLS、设备配对和 mTLS。
 
 ## 开发与验证
 
@@ -93,11 +93,10 @@ internal/devices/  设备状态注册表
 internal/relay/    Agent 连接与 RPC 管理
 pkg/protocol/      当前 JSON 消息结构
 proto/             Protobuf 协议草案
-docs/              实现方案与架构决策
 ```
 
-## 路线图与文档
+## 路线图
 
-下一步是设备配对、短期证书、浏览器认证和持久化。完整任务顺序见[实现方案](docs/IMPLEMENTATION_PLAN.md)。
+下一步是设备配对、短期证书、浏览器认证和持久化。设计文档仅保存在开发者本地 `docs/` 目录，不随 Git 仓库发布。
 
 项目在设计阶段参考了 [ShellHub](https://github.com/shellhub-io/shellhub) 的 Agent 与网关拓扑、[MeshCentral](https://github.com/Ylianst/MeshCentral) 的设备生命周期，以及 [ttyd](https://github.com/tsl0922/ttyd) 的浏览器终端经验。SinthMux 为独立实现。
