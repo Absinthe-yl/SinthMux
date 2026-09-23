@@ -120,6 +120,28 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .terminal-expand { display: grid; place-items: center; padding: 5px; border: 0; background: none; color: var(--muted); }
 .terminal-surface { height: min(72vh, 760px); min-height: 360px; padding: 14px; background: var(--terminal-bg); }
 .terminal-surface .xterm { height: 100%; }
+.user-name { color: var(--ink); font-size: 12px; }
+.login-shell { min-height: calc(100vh - 71px); display: grid; place-items: center; padding: 24px; }
+.login-card { width: min(370px, 100%); padding: 30px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.login-mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 9px; background: var(--accent); color: var(--page); font-weight: 800; }
+.login-card h1 { margin: 22px 0; font-size: 22px; }
+.github-login, .login-card form button { display: block; width: 100%; padding: 11px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: var(--page); font-size: 13px; font-weight: 700; text-align: center; text-decoration: none; }
+.login-divider { margin: 22px 0; color: var(--muted); font-size: 12px; text-align: center; }
+.login-card form { display: grid; gap: 9px; }
+.login-card input { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); }
+.login-card .notice { margin-top: 14px; }
+.workspace-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -4px 0 18px; }
+.workspace-bar label { margin-right: auto; color: var(--muted); font-size: 12px; }
+.workspace-bar select, .workspace-bar button, .secret-panel button { margin-left: 5px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); font-size: 12px; }
+.workspace-bar button:hover, .secret-panel button:hover { border-color: var(--accent); color: var(--accent); }
+.secret-panel { margin-bottom: 16px; padding: 15px; border: 1px solid var(--accent); border-radius: 9px; background: var(--surface); font-size: 12px; }
+.secret-panel pre { overflow: auto; padding: 10px; border-radius: 6px; background: var(--surface-alt); user-select: all; }
+.management-panel { margin: 0 0 16px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+.management-heading, .management-row { display: flex; align-items: center; gap: 9px; padding: 7px 0; font-size: 12px; }
+.management-heading strong, .management-row span { margin-right: auto; }
+.management-row { border-top: 1px solid var(--line); }
+.management-panel button, .device-revoke { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--muted); font-size: 11px; }
+.management-panel button:hover, .device-revoke:hover { border-color: var(--accent); color: var(--accent); }
 @media (max-width: 600px) {
   .topbar-inner, .shell { width: min(100% - 28px, 980px); }
   .shell { padding-top: 31px; }

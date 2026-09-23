@@ -1,7 +1,11 @@
 package relay
 
 import (
+	"context"
+	"crypto/sha256"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -30,10 +34,41 @@ func TestTerminalTicketSingleUseAndExpiry(t *testing.T) {
 		t.Fatal("ticket replay accepted")
 	}
 	handler.mu.Lock()
-	handler.tickets[ticket] = terminalTicket{deviceID: "device", session: "work", expires: time.Now().Add(-time.Second)}
+	handler.tickets[ticketKey(ticket)] = terminalTicket{deviceID: "device", session: "work", expires: time.Now().Add(-time.Second)}
 	handler.mu.Unlock()
 	if _, ok := handler.consume(ticket); ok {
 		t.Fatal("expired ticket accepted")
+	}
+}
+
+func TestTerminalTicketBindsBrowserSession(t *testing.T) {
+	manager := NewManager()
+	manager.Register("device", nil)
+	handler := NewTerminalHandler(manager)
+	hash := sha256.Sum256([]byte("session-secret"))
+	handler.ValidateGrant = func(context.Context, TerminalGrant) bool { return false }
+	request := func(cookie string) int {
+		ticket, err := handler.IssueWithGrant("device", "work", TerminalGrant{SessionHash: hash[:]})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := httptest.NewRequest("GET", "http://127.0.0.1:8090/ws/v1/terminal", nil)
+		r.Header.Set("Sec-WebSocket-Protocol", "sinthmux.v1, sinthmux.ticket."+ticket)
+		if cookie != "" {
+			r.AddCookie(&http.Cookie{Name: "sinthmux_session", Value: cookie})
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w.Code
+	}
+	if got := request(""); got != 401 {
+		t.Fatalf("missing session status=%d", got)
+	}
+	if got := request("another-session"); got != 403 {
+		t.Fatalf("wrong session status=%d", got)
+	}
+	if got := request("session-secret"); got != 403 {
+		t.Fatalf("revoked grant status=%d", got)
 	}
 }
 

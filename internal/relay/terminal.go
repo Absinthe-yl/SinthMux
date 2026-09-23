@@ -3,6 +3,8 @@ package relay
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -18,19 +20,38 @@ type terminalTicket struct {
 	deviceID string
 	session  string
 	expires  time.Time
+	grant    TerminalGrant
+}
+
+type TerminalGrant struct {
+	UserID      string
+	SpaceID     string
+	DeviceID    string
+	SessionHash []byte
 }
 
 type TerminalHandler struct {
-	Manager *Manager
-	mu      sync.Mutex
-	tickets map[string]terminalTicket
+	Manager       *Manager
+	mu            sync.Mutex
+	tickets       map[string]terminalTicket
+	ValidateGrant func(context.Context, TerminalGrant) bool
+	OriginPattern string
 }
 
 func NewTerminalHandler(manager *Manager) *TerminalHandler {
 	return &TerminalHandler{Manager: manager, tickets: make(map[string]terminalTicket)}
 }
 
+func ticketKey(ticket string) string {
+	sum := sha256.Sum256([]byte(ticket))
+	return hex.EncodeToString(sum[:])
+}
+
 func (h *TerminalHandler) Issue(deviceID, session string) (string, error) {
+	return h.IssueWithGrant(deviceID, session, TerminalGrant{})
+}
+
+func (h *TerminalHandler) IssueWithGrant(deviceID, session string, grant TerminalGrant) (string, error) {
 	if !protocol.ValidSessionName(session) {
 		return "", ErrInvalidResponse
 	}
@@ -48,7 +69,7 @@ func (h *TerminalHandler) Issue(deviceID, session string) (string, error) {
 			delete(h.tickets, key)
 		}
 	}
-	h.tickets[ticket] = terminalTicket{deviceID: deviceID, session: session, expires: time.Now().Add(45 * time.Second)}
+	h.tickets[ticketKey(ticket)] = terminalTicket{deviceID: deviceID, session: session, expires: time.Now().Add(45 * time.Second), grant: grant}
 	h.mu.Unlock()
 	return ticket, nil
 }
@@ -56,8 +77,9 @@ func (h *TerminalHandler) Issue(deviceID, session string) (string, error) {
 func (h *TerminalHandler) consume(ticket string) (terminalTicket, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	item, ok := h.tickets[ticket]
-	delete(h.tickets, ticket)
+	key := ticketKey(ticket)
+	item, ok := h.tickets[key]
+	delete(h.tickets, key)
 	return item, ok && time.Now().Before(item.expires)
 }
 
@@ -84,7 +106,23 @@ func (h *TerminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid or expired terminal ticket", http.StatusUnauthorized)
 		return
 	}
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"localhost:*", "127.0.0.1:*"}, Subprotocols: []string{"sinthmux.v1"}})
+	if h.ValidateGrant != nil {
+		cookie, err := r.Cookie("sinthmux_session")
+		if err != nil {
+			http.Error(w, "login required", http.StatusUnauthorized)
+			return
+		}
+		hash := sha256.Sum256([]byte(cookie.Value))
+		if subtle.ConstantTimeCompare(hash[:], item.grant.SessionHash) != 1 || !h.ValidateGrant(r.Context(), item.grant) {
+			http.Error(w, "ticket permission denied", http.StatusForbidden)
+			return
+		}
+	}
+	origins := []string{"localhost:*", "127.0.0.1:*"}
+	if h.OriginPattern != "" {
+		origins = []string{h.OriginPattern}
+	}
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: origins, Subprotocols: []string{"sinthmux.v1"}})
 	if err != nil {
 		return
 	}
@@ -98,12 +136,18 @@ func (h *TerminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer stop()
+	validationTicker := time.NewTicker(2 * time.Second)
+	defer validationTicker.Stop()
 	readErrors := make(chan error, 1)
 	go func() {
 		for {
 			typeOfMessage, body, readErr := conn.Read(ctx)
 			if readErr != nil {
 				readErrors <- readErr
+				return
+			}
+			if h.ValidateGrant != nil && !h.ValidateGrant(ctx, item.grant) {
+				readErrors <- ErrOffline
 				return
 			}
 			var envelope protocol.Envelope
@@ -133,6 +177,11 @@ func (h *TerminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-validationTicker.C:
+			if h.ValidateGrant != nil && !h.ValidateGrant(ctx, item.grant) {
+				_ = conn.Close(websocket.StatusPolicyViolation, "permission revoked")
+				return
+			}
 		case <-readErrors:
 			return
 		case envelope := <-events:

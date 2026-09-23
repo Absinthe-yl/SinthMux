@@ -8,3 +8,6 @@ dist/
 apps/web/node_modules/
 apps/web/dist/
 docs/
+.run/
+deploy/.env.local
+deploy/.bootstrap-token

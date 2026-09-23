@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: sinthmux
       POSTGRES_USER: sinthmux
-      POSTGRES_PASSWORD: sinthmux-dev-only
+      POSTGRES_PASSWORD: ${SINTHMUX_COMPOSE_DB_PASSWORD:?run scripts/docker-up.sh first}
     volumes:
       - sinthmux-postgres:/var/lib/postgresql/data
     healthcheck:
@@ -19,12 +19,24 @@ services:
       dockerfile: deploy/hub.Dockerfile
     environment:
       SINTHMUX_HUB_ADDR: :8080
-      SINTHMUX_DEV_TOKEN: ${SINTHMUX_DEV_TOKEN:-sinthmux-local-dev}
+      SINTHMUX_DATABASE_URL: postgres://sinthmux:${SINTHMUX_COMPOSE_DB_PASSWORD:?run scripts/docker-up.sh first}@postgres:5432/sinthmux?sslmode=disable
+      SINTHMUX_PUBLIC_URL: ${SINTHMUX_PUBLIC_URL:-http://127.0.0.1:5173}
+      SINTHMUX_GITHUB_CLIENT_ID: ${SINTHMUX_GITHUB_CLIENT_ID:-}
+      SINTHMUX_GITHUB_CLIENT_SECRET: ${SINTHMUX_GITHUB_CLIENT_SECRET:-}
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8090:8080"
     depends_on:
       postgres:
         condition: service_healthy
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/web.Dockerfile
+    ports:
+      - "127.0.0.1:5173:80"
+    depends_on:
+      - hub
 
 volumes:
   sinthmux-postgres:

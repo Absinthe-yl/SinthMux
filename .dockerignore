@@ -1,0 +1,11 @@
+.git
+.env
+.run
+docs
+deploy/.env.local
+deploy/.bootstrap-token
+apps/web/node_modules
+apps/web/dist
+node_modules
+dist
+*.tsbuildinfo

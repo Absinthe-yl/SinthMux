@@ -37,6 +37,10 @@ func main() {
 
 func run(ctx context.Context, settings config.Agent, logger *slog.Logger) error {
 	headers := http.Header{"Authorization": []string{"Bearer " + settings.DevToken}}
+	if settings.DeviceToken != "" {
+		headers.Set("Authorization", "Bearer "+settings.DeviceToken)
+		headers.Set("X-Sinthmux-Device-ID", settings.DeviceID)
+	}
 	connection, _, err := websocket.Dial(ctx, settings.HubURL, &websocket.DialOptions{HTTPHeader: headers})
 	if err != nil {
 		return err

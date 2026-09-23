@@ -13,13 +13,21 @@ import (
 )
 
 type AgentHandler struct {
-	Registry *devices.Registry
-	Manager  *Manager
-	DevToken string
+	Registry           *devices.Registry
+	Manager            *Manager
+	DevToken           string
+	AuthenticateDevice func(context.Context, string, string) bool
 }
 
 func (h AgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") != "Bearer "+h.DevToken {
+	authorizedID := ""
+	if h.AuthenticateDevice != nil {
+		authorizedID = r.Header.Get("X-Sinthmux-Device-ID")
+		if authorizedID == "" || !h.AuthenticateDevice(r.Context(), authorizedID, r.Header.Get("Authorization")) {
+			http.Error(w, "invalid device credential", http.StatusUnauthorized)
+			return
+		}
+	} else if r.Header.Get("Authorization") != "Bearer "+h.DevToken {
 		http.Error(w, "invalid development token", http.StatusUnauthorized)
 		return
 	}
@@ -57,9 +65,9 @@ func (h AgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		switch envelope.Type {
 		case protocol.MessageAgentHello:
-			if agent != nil || envelope.Version != protocol.Version || envelope.Hello == nil || envelope.Hello.DeviceID == "" {
+			if agent != nil || envelope.Version != protocol.Version || envelope.Hello == nil || envelope.Hello.DeviceID == "" || (authorizedID != "" && envelope.Hello.DeviceID != authorizedID) {
 				_ = writeEnvelope(ctx, connection, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageError, Error: &protocol.Error{Code: "invalid_hello", Message: "deviceId is required"}})
-				continue
+				return
 			}
 			deviceID = envelope.Hello.DeviceID
 			agent = h.Manager.Register(deviceID, connection)

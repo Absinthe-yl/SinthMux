@@ -10,6 +10,7 @@ import (
 
 type Device struct {
 	ID           string    `json:"id"`
+	SpaceID      string    `json:"spaceId,omitempty"`
 	Name         string    `json:"name"`
 	Platform     string    `json:"platform"`
 	Architecture string    `json:"architecture"`

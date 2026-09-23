@@ -3,6 +3,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { ArrowLeft, Maximize2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { APIError, request } from "./api";
 
 export default function TerminalView({ deviceId, deviceName, session, theme, onBack }: { deviceId: string; deviceName: string; session: string; theme: "light" | "dark"; onBack: () => void }) {
   const host = useRef<HTMLDivElement>(null);
@@ -30,6 +31,10 @@ export default function TerminalView({ deviceId, deviceName, session, theme, onB
     terminal.current = term;
     let socket: WebSocket | undefined;
     let disposed = false;
+    let connecting = false;
+    let connectedOnce = false;
+    let retryCount = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const resize = () => {
       fit.fit();
       if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
@@ -39,29 +44,66 @@ export default function TerminalView({ deviceId, deviceName, session, theme, onB
     const onInput = term.onData((input) => {
       if (socket?.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(input));
     });
+    const scheduleRetry = () => {
+      if (disposed || retryTimer) return;
+      const delay = Math.min(1000 * 2 ** retryCount, 10000);
+      retryCount++;
+      setState(`连接已断开，${delay / 1000} 秒后重连…`);
+      retryTimer = setTimeout(() => { retryTimer = undefined; void connect(); }, delay);
+    };
     const connect = async () => {
+      if (disposed || connecting) return;
+      connecting = true;
+      setState(connectedOnce ? "正在重新连接…" : "连接中…");
       try {
         const path = `/api/v1/devices/${encodeURIComponent(deviceId)}/sessions/${encodeURIComponent(session)}/ticket`;
-        const response = await fetch(path, { method: "POST", signal: abort.signal });
-        if (!response.ok) {
-          const body = await response.json().catch(() => ({})) as { error?: string };
-          throw new Error(body.error ?? `连接失败：${response.status}`);
-        }
-        const { ticket } = await response.json() as { ticket: string };
+        const { ticket } = await request<{ ticket: string }>(path, { method: "POST", signal: abort.signal });
         if (disposed) return;
         const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-        socket = new WebSocket(`${scheme}//${location.host}/ws/v1/terminal`, ["sinthmux.v1", `sinthmux.ticket.${ticket}`]);
-        socket.binaryType = "arraybuffer";
-        socket.onopen = () => { setState("已连接"); resize(); term.focus(); };
-        socket.onmessage = (event: MessageEvent<ArrayBuffer>) => { if (event.data instanceof ArrayBuffer) term.write(new Uint8Array(event.data)); };
-        socket.onclose = (event) => { if (!disposed) setState(event.reason || "连接已断开"); };
-        socket.onerror = () => { if (!disposed) setState("连接失败"); };
+        const nextSocket = new WebSocket(`${scheme}//${location.host}/ws/v1/terminal`, ["sinthmux.v1", `sinthmux.ticket.${ticket}`]);
+        socket = nextSocket;
+        nextSocket.binaryType = "arraybuffer";
+        nextSocket.onopen = () => {
+          if (disposed || socket !== nextSocket) return;
+          connecting = false;
+          if (connectedOnce) term.reset();
+          connectedOnce = true;
+          retryCount = 0;
+          setState("已连接");
+          resize();
+          term.focus();
+        };
+        nextSocket.onmessage = (event: MessageEvent<ArrayBuffer>) => { if (socket === nextSocket && event.data instanceof ArrayBuffer) term.write(new Uint8Array(event.data)); };
+        nextSocket.onclose = (event) => {
+          if (disposed || socket !== nextSocket) return;
+          connecting = false;
+          socket = undefined;
+          if (event.code === 1008 || (event.code === 1000 && /terminal exited|cannot open tmux session|invalid terminal request/.test(event.reason))) {
+            setState(event.reason || "终端会话已结束");
+            return;
+          }
+          scheduleRetry();
+        };
+        nextSocket.onerror = () => { if (!disposed && socket === nextSocket) setState("连接中断…"); };
       } catch (error) {
-        if (!disposed) setState(error instanceof Error ? error.message : "连接失败");
+        connecting = false;
+        if (disposed) return;
+        if (error instanceof APIError && [400, 401, 403, 404].includes(error.status)) {
+          setState(error.message);
+          return;
+        }
+        scheduleRetry();
       }
     };
+    const reconnectNow = () => {
+      if (disposed || connecting || socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return;
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = undefined;
+      void connect();
+    };
+    window.addEventListener("online", reconnectNow);
     void connect();
-    return () => { disposed = true; abort.abort(); socket?.close(); observer.disconnect(); onInput.dispose(); terminal.current = null; term.dispose(); };
+    return () => { disposed = true; abort.abort(); if (retryTimer) clearTimeout(retryTimer); window.removeEventListener("online", reconnectNow); socket?.close(); observer.disconnect(); onInput.dispose(); terminal.current = null; term.dispose(); };
   }, [deviceId, session]);
 
   return <section className="terminal-page" aria-label={`${session} 终端`}>

@@ -4,7 +4,7 @@
 
 SinthMux 是一个面向个人和小团队的多主机终端工作台。每台机器上的 Agent 主动连接 Hub，因此设备可以位于 NAT 或防火墙后面，无需为 Agent 开放入站端口。项目的目标是在浏览器中管理、连接和恢复各机器上的持久 tmux 会话。
 
-> **项目状态：早期开发。** 当前已打通设备注册、会话管理和浏览器终端。正式认证仍在开发中；请勿将当前版本直接部署到公网。
+> **项目状态：早期开发。** 浏览器登录、空间权限和独立设备令牌已接入；设备证书与 mTLS 尚未完成，请勿将当前版本直接部署到公网。
 
 ## 当前可以做什么
 
@@ -15,20 +15,23 @@ SinthMux 是一个面向个人和小团队的多主机终端工作台。每台�
 | Web 查看指定设备的 tmux 会话列表 | 已实现 |
 | 创建、重命名、关闭 tmux 会话 | 已实现 |
 | 在浏览器中连接和恢复终端 | 已实现（本地开发） |
-| 设备配对、mTLS 与浏览器认证 | 计划中 |
+| GitHub 登录、SinthMux 登录令牌、个人/团队空间与角色权限 | 已实现（需 PostgreSQL） |
+| 独立设备令牌、设备空间绑定 | 已实现（mTLS 待完成） |
+| 设备证书与 mTLS | 计划中 |
 
 ## 快速开始
 
-开发环境需要 **Go 1.25+、Node.js 20+、npm 和 tmux**。Agent 所在机器需安装 tmux；当前示例在同一台机器上运行所有组件。
+源码试用需要 **Go 1.25+、Node.js 20+、npm、tmux、curl 和 nc**。Agent 所在机器需安装 tmux；当前示例在同一台机器上运行所有组件。克隆后执行一条启动命令：
 
 ```bash
 git clone https://github.com/Absinthe-yl/SinthMux.git
 cd SinthMux
-go mod download
-npm --prefix apps/web install
+make quickstart
 ```
 
-在三个终端分别运行：
+脚本会构建 Hub 和 Agent、首次安装 Web 依赖，然后打开本机 `http://127.0.0.1:5173/`。按 Ctrl+C 停止三个服务，tmux 会话继续运行；日志在 `.run/log/`。若没有本地 `.env`，脚本使用仅限环回地址的开发模式；正式登录模式需要先配置 PostgreSQL、`.env` 和设备令牌。
+
+开发时也可以在三个终端分别运行：
 
 ```bash
 make dev-hub
@@ -57,7 +60,32 @@ curl -X DELETE http://127.0.0.1:8090/api/v1/devices/local-dev/sessions/work
 
 Hub 默认监听 `127.0.0.1:8090`，Web 开发服务器默认使用 `5173` 端口。Agent 的设备 ID、名称及连接地址可通过 `SINTHMUX_AGENT_DEVICE_ID`、`SINTHMUX_AGENT_NAME` 和 `SINTHMUX_AGENT_HUB_URL` 配置，示例见 [`.env.example`](.env.example)。
 
-> 当前 Agent 连接使用共享开发 Token，浏览器 API 尚无正式认证。该 Token 仅用于本地联调；不要把开发服务或 Hub 暴露到公网。
+> 上述未设置数据库的本地开发模式仍使用共享开发 Token，浏览器 API 不启用认证。该 Token 仅用于本地联调；不要把开发服务或 Hub 暴露到公网。
+
+## 正式登录模式
+
+设置 `SINTHMUX_DATABASE_URL` 后，Hub 启用 PostgreSQL 持久化与正式登录；未设置时只允许监听环回地址并保留本地开发模式。正式模式还需要 `SINTHMUX_PUBLIC_URL`，本机使用 `http://127.0.0.1:5173`，对外部署必须使用 HTTPS。GitHub 登录另外配置 `SINTHMUX_GITHUB_CLIENT_ID`、`SINTHMUX_GITHUB_CLIENT_SECRET`，OAuth 回调地址为 `<SINTHMUX_PUBLIC_URL>/api/v1/auth/github/callback`。
+
+本地可将这些配置写入被 Git 忽略的 `.env`；`make dev-hub`、`make dev-agent` 和 `make test` 会自动读取它。配置 `SINTHMUX_TEST_DATABASE_URL` 后，`make test` 也会运行 PostgreSQL 集成测试。Agent 正式模式还需要在 `.env` 中设置从页面创建设备时得到的 `SINTHMUX_AGENT_DEVICE_ID` 和 `SINTHMUX_AGENT_DEVICE_TOKEN`。
+
+首次使用令牌登录时，在数据库为空的情况下执行一次：
+
+```bash
+SINTHMUX_DATABASE_URL='postgres://sinthmux:password@127.0.0.1:5432/sinthmux?sslmode=disable' \
+  go run ./apps/hub bootstrap-token Absinthe
+```
+
+命令只显示一次、有效期 24 小时的初始登录令牌。登录后可在页面生成新的个人令牌，创建团队空间、成员和设备。添加设备会显示独立的 `SINTHMUX_AGENT_DEVICE_ID` 与 `SINTHMUX_AGENT_DEVICE_TOKEN`；在 Agent 所在机器设置这两个变量，再启动 Agent。成员角色由 Hub 检查：Viewer 只能看列表；Operator 可进入终端及创建、重命名会话；Admin 和 Owner 还能关闭会话、管理设备；只有 Owner 能管理成员。只读终端链路完成前，Viewer 无法领取终端票据。
+
+如果已安装 Docker Compose，可以把 PostgreSQL、Hub 和生产构建的 Web 一起启动，不需要在宿主机安装 Go 或 Node：
+
+```bash
+make docker-up
+```
+
+打开 `http://127.0.0.1:5173/`，首次登录令牌保存在被 Git 忽略的 `deploy/.bootstrap-token`，24 小时内使用，并在登录后创建长期令牌。Compose 的数据库密码自动生成到 `deploy/.env.local`；请保留该文件以便重启时连接原数据库。停止服务运行 `make docker-down`，数据库卷会保留。
+
+Agent 管理的是它所在机器的 tmux，因此目前仍需在该机器原生运行。先在 Web 中创建设备，将页面显示的设备 ID 和令牌写入本机被 Git 忽略的 `.env`，再运行 `make dev-agent`（需要 Go 和 tmux）。Hub 和 Web 仅映射到宿主机环回地址；公网入口、TLS、Agent mTLS 与证书轮换仍需完成，当前正式登录模式不代表已具备公网部署条件。
 
 ## 工作方式
 
@@ -97,6 +125,6 @@ proto/             Protobuf 协议草案
 
 ## 路线图
 
-下一步是设备配对、短期证书、浏览器认证和持久化。设计文档仅保存在开发者本地 `docs/` 目录，不随 Git 仓库发布。
+下一步是设备配对、短期证书、mTLS 与公网入口部署验证。设计文档仅保存在开发者本地 `docs/` 目录，不随 Git 仓库发布。
 
 项目在设计阶段参考了 [ShellHub](https://github.com/shellhub-io/shellhub) 的 Agent 与网关拓扑、[MeshCentral](https://github.com/Ylianst/MeshCentral) 的设备生命周期，以及 [ttyd](https://github.com/tsl0922/ttyd) 的浏览器终端经验。SinthMux 为独立实现。

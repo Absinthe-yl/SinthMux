@@ -129,6 +129,17 @@ func (m *Manager) Online(id string) bool {
 	return m.agents[id] != nil
 }
 
+func (m *Manager) Revoke(id string) {
+	m.mu.Lock()
+	agent := m.agents[id]
+	delete(m.agents, id)
+	m.mu.Unlock()
+	if agent != nil {
+		agent.failAll(ErrOffline)
+		agent.conn.CloseNow()
+	}
+}
+
 func (m *Manager) OpenStream(ctx context.Context, deviceID, session string, cols, rows uint16) (string, <-chan protocol.Envelope, func(), error) {
 	idBytes := make([]byte, 16)
 	if _, err := rand.Read(idBytes); err != nil {
