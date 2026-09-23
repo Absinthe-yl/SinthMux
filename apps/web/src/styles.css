@@ -136,7 +136,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .login-token-form input { width: 100%; padding: 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-alt); color: var(--ink); }
 .login-token-form button { padding: 11px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: var(--page); font-weight: 700; }
 .login-token-form .notice { margin: 0; }
-.login-foot { margin-top: 35px; padding-top: 23px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.login-card .login-token-help { margin: 1px 0 5px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.login-token-help code { padding: 2px 5px; border-radius: 4px; background: var(--surface-alt); color: var(--ink); font-size: 11px; overflow-wrap: anywhere; }
 .workspace-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -4px 0 18px; }
 .workspace-bar label { margin-right: auto; color: var(--muted); font-size: 12px; }
 .workspace-bar select, .workspace-bar button, .secret-panel button { margin-left: 5px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); font-size: 12px; }

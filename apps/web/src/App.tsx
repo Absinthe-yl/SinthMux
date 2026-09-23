@@ -53,8 +53,13 @@ function Login({ githubEnabled, theme, onToggleTheme, onLogin }: { githubEnabled
       <h1>SinthMux</h1>
       <p>终端继续运行，回来接着用。</p>
       {githubEnabled && <a className="github-login" href="/api/v1/auth/github/start">使用 GitHub 登录</a>}
-      {showToken ? <form className="login-token-form" onSubmit={(event) => void submit(event)}><label htmlFor="login-token">用户令牌</label><input id="login-token" type="password" autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} required autoFocus /><button type="submit" disabled={busy}>{busy ? "登录中…" : "使用令牌登录"}</button>{error && <div className="notice error">{error}</div>}</form> : <button className="login-token-toggle" type="button" onClick={() => setShowToken(true)}>使用令牌登录</button>}
-      <div className="login-foot">你的终端，随时接续。</div>
+      {showToken ? <form className="login-token-form" onSubmit={(event) => void submit(event)}>
+        <label htmlFor="login-token">用户令牌</label>
+        <input id="login-token" type="password" autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} required autoFocus />
+        <p className="login-token-help">首次使用？在部署机器的仓库目录运行 <code>./scripts/docker-up.sh</code>，再用 <code>cat deploy/.bootstrap-token</code> 查看初始令牌。</p>
+        <button type="submit" disabled={busy}>{busy ? "登录中…" : "使用令牌登录"}</button>
+        {error && <div className="notice error">{error}</div>}
+      </form> : <button className="login-token-toggle" type="button" onClick={() => setShowToken(true)}>使用令牌登录</button>}
     </section>
   </main>;
 }
