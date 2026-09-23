@@ -129,7 +129,13 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .login-card p { margin: 0 0 34px; color: var(--muted); font-size: 13px; }
 .github-login { display: block; width: 100%; padding: 13px; border: 1px solid var(--accent); border-radius: 9px; background: var(--accent); color: var(--page); font-size: 14px; font-weight: 700; text-align: center; text-decoration: none; }
 .github-login:hover { opacity: .88; }
-.login-setup { padding: 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); font-size: 12px; }
+.login-token-toggle { display: block; margin: 20px auto 0; padding: 6px 10px; border: 0; background: none; color: var(--muted); font-size: 12px; }
+.login-token-toggle:hover { color: var(--ink); }
+.login-token-form { display: grid; gap: 10px; margin-top: 18px; text-align: left; }
+.login-token-form label { color: var(--muted); font-size: 12px; }
+.login-token-form input { width: 100%; padding: 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-alt); color: var(--ink); }
+.login-token-form button { padding: 11px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: var(--page); font-weight: 700; }
+.login-token-form .notice { margin: 0; }
 .login-foot { margin-top: 35px; padding-top: 23px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .workspace-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -4px 0 18px; }
 .workspace-bar label { margin-right: auto; color: var(--muted); font-size: 12px; }

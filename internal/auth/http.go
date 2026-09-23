@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -19,7 +20,7 @@ import (
 
 const cookieName = "sinthmux_session"
 
-type OAuthConfig struct{ ClientID, ClientSecret, PublicURL, AuthorizeURL, TokenURL, UserURL string }
+type OAuthConfig struct{ ClientID, ClientSecret, PublicURL, AuthorizeURL, TokenURL, UserURL, BrokerURL, BrokerPublicKey string }
 type OAuthState struct {
 	Verifier string
 	Expires  time.Time
@@ -48,6 +49,14 @@ func NewServer(store *Store, oauth OAuthConfig) *Server {
 		oauth.UserURL = "https://api.github.com/user"
 	}
 	return &Server{Store: store, OAuth: oauth, states: map[string]OAuthState{}, attempts: map[string][]time.Time{}}
+}
+func (s *Server) BrokerEnabled() bool {
+	key, err := base64.RawURLEncoding.DecodeString(s.OAuth.BrokerPublicKey)
+	broker, urlErr := url.Parse(s.OAuth.BrokerURL)
+	return err == nil && len(key) == ed25519.PublicKeySize && urlErr == nil && broker != nil && broker.Host != "" && broker.User == nil && broker.Path == "" && broker.RawQuery == "" && broker.Fragment == "" && (broker.Scheme == "https" || broker.Scheme == "http" && (broker.Hostname() == "localhost" || broker.Hostname() == "127.0.0.1"))
+}
+func (s *Server) GithubEnabled() bool {
+	return s.BrokerEnabled() || (s.OAuth.ClientID != "" && s.OAuth.ClientSecret != "")
 }
 func FromContext(ctx context.Context) (Session, bool) {
 	s, ok := ctx.Value(sessionKey).(Session)
@@ -128,10 +137,15 @@ func (s *Server) Device(action string, next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) Mount(r chi.Router) {
 	r.Get("/api/v1/auth/github/start", s.githubStart)
 	r.Get("/api/v1/auth/github/callback", s.githubCallback)
+	r.Get("/api/v1/auth/github/broker/callback", s.brokerCallback)
+	r.Post("/api/v1/auth/token", s.tokenLogin)
 	r.Group(func(r chi.Router) {
 		r.Use(s.Require)
 		r.Get("/api/v1/auth/me", s.me)
 		r.Post("/api/v1/auth/logout", s.logout)
+		r.Get("/api/v1/auth/tokens", s.tokens)
+		r.Post("/api/v1/auth/tokens", s.createToken)
+		r.Delete("/api/v1/auth/tokens/{tokenId}", s.revokeToken)
 		r.Get("/api/v1/spaces", s.spaces)
 		r.Post("/api/v1/spaces", s.createSpace)
 		r.Post("/api/v1/spaces/{spaceId}/members", s.addMember)
@@ -203,6 +217,80 @@ func (s *Server) rateLimit(key string) bool {
 	return true
 }
 
+func (s *Server) tokenLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.originAllowed(r) {
+		respond(w, 403, map[string]string{"error": "origin denied"})
+		return
+	}
+	if !s.rateLimit(r.RemoteAddr) {
+		respond(w, 429, map[string]string{"error": "too many attempts"})
+		return
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if !readBody(w, r, &body) {
+		return
+	}
+	user, tokenID, err := s.Store.TokenUser(r.Context(), body.Token)
+	if err != nil {
+		s.Store.Audit(r.Context(), "", "", r.RemoteAddr, "auth.token_login", "denied")
+		respond(w, 401, map[string]string{"error": "invalid login token"})
+		return
+	}
+	secret, _, err := s.Store.NewSession(r.Context(), user.ID, tokenID)
+	if err != nil {
+		respond(w, 500, map[string]string{"error": "database error"})
+		return
+	}
+	s.setCookie(w, secret)
+	s.Store.Audit(r.Context(), user.ID, "", user.ID, "auth.token_login", "ok")
+	respond(w, 200, map[string]any{"user": user})
+}
+
+func (s *Server) tokens(w http.ResponseWriter, r *http.Request) {
+	session, _ := FromContext(r.Context())
+	items, err := s.Store.Tokens(r.Context(), session.User.ID)
+	if err != nil {
+		respond(w, 500, map[string]string{"error": "database error"})
+		return
+	}
+	respond(w, 200, map[string]any{"tokens": items})
+}
+
+func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if !readBody(w, r, &body) {
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	if len(body.Name) < 1 || len(body.Name) > 80 {
+		respond(w, 400, map[string]string{"error": "invalid name"})
+		return
+	}
+	session, _ := FromContext(r.Context())
+	token, err := s.Store.NewToken(r.Context(), session.User.ID, body.Name, 90*24*time.Hour)
+	if err != nil {
+		respond(w, 500, map[string]string{"error": "database error"})
+		return
+	}
+	s.Store.Audit(r.Context(), session.User.ID, "", session.User.ID, "auth.token_create", "ok")
+	respond(w, 201, map[string]string{"token": token})
+}
+
+func (s *Server) revokeToken(w http.ResponseWriter, r *http.Request) {
+	session, _ := FromContext(r.Context())
+	err := s.Store.RevokeToken(r.Context(), session.User.ID, chi.URLParam(r, "tokenId"))
+	if err != nil {
+		respond(w, 404, map[string]string{"error": "token not found"})
+		return
+	}
+	s.Store.Audit(r.Context(), session.User.ID, "", chi.URLParam(r, "tokenId"), "auth.token_revoke", "ok")
+	w.WriteHeader(204)
+}
+
 func (s *Server) spaces(w http.ResponseWriter, r *http.Request) {
 	session, _ := FromContext(r.Context())
 	items, err := s.Store.Spaces(r.Context(), session.User.ID)
@@ -257,13 +345,15 @@ func (s *Server) auditEvents(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) addMember(w http.ResponseWriter, r *http.Request) {
 	var body struct {
+		Name     string `json:"name"`
 		Role     string `json:"role"`
 		GithubID int64  `json:"githubId"`
 	}
 	if !readBody(w, r, &body) {
 		return
 	}
-	if body.GithubID <= 0 || body.Role == "owner" || !Allowed(body.Role, "list") {
+	body.Name = strings.TrimSpace(body.Name)
+	if (body.GithubID == 0 && (len(body.Name) < 1 || len(body.Name) > 80)) || body.Role == "owner" || !Allowed(body.Role, "list") {
 		respond(w, 400, map[string]string{"error": "invalid member"})
 		return
 	}
@@ -278,13 +368,27 @@ func (s *Server) addMember(w http.ResponseWriter, r *http.Request) {
 		respond(w, 403, map[string]string{"error": "permission denied"})
 		return
 	}
-	user, err := s.Store.AddGithubMember(r.Context(), spaceID, body.GithubID, body.Role)
+	var user User
+	if body.GithubID > 0 {
+		user, err = s.Store.AddGithubMember(r.Context(), spaceID, body.GithubID, body.Role)
+	} else {
+		user, err = s.Store.AddMember(r.Context(), spaceID, body.Name, body.Role)
+	}
 	if err != nil {
 		respond(w, 400, map[string]string{"error": "could not create member"})
 		return
 	}
 	s.Store.Audit(r.Context(), session.User.ID, spaceID, user.ID, "member.create", "ok")
-	respond(w, 201, map[string]any{"user": user})
+	if body.GithubID > 0 {
+		respond(w, 201, map[string]any{"user": user})
+		return
+	}
+	token, err := s.Store.NewToken(r.Context(), user.ID, "初始登录令牌", 7*24*time.Hour)
+	if err != nil {
+		respond(w, 500, map[string]string{"error": "database error"})
+		return
+	}
+	respond(w, 201, map[string]any{"user": user, "token": token})
 }
 
 func (s *Server) members(w http.ResponseWriter, r *http.Request) {
@@ -407,6 +511,10 @@ func (s *Server) createDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) githubStart(w http.ResponseWriter, r *http.Request) {
+	if s.BrokerEnabled() {
+		s.brokerStart(w, r)
+		return
+	}
 	if s.OAuth.ClientID == "" || s.OAuth.ClientSecret == "" {
 		respond(w, 503, map[string]string{"error": "GitHub login not configured"})
 		return
@@ -446,6 +554,10 @@ func (s *Server) githubStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) githubCallback(w http.ResponseWriter, r *http.Request) {
+	if s.BrokerEnabled() {
+		respond(w, 404, map[string]string{"error": "direct GitHub login disabled"})
+		return
+	}
 	state := r.URL.Query().Get("state")
 	cookie, err := r.Cookie("sinthmux_oauth_state")
 	if err != nil || state == "" || cookie.Value != state {

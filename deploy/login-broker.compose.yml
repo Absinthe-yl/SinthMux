@@ -1,0 +1,13 @@
+services:
+  login-broker:
+    build:
+      context: ..
+      dockerfile: deploy/login-broker.Dockerfile
+    environment:
+      SINTHMUX_BROKER_ADDR: :8091
+      SINTHMUX_BROKER_PUBLIC_URL: ${SINTHMUX_BROKER_PUBLIC_URL:?set broker HTTPS URL}
+      SINTHMUX_BROKER_SIGNING_SEED: ${SINTHMUX_BROKER_SIGNING_SEED:?set Ed25519 seed}
+      SINTHMUX_GITHUB_CLIENT_ID: ${SINTHMUX_GITHUB_CLIENT_ID:?set GitHub OAuth client ID}
+      SINTHMUX_GITHUB_CLIENT_SECRET: ${SINTHMUX_GITHUB_CLIENT_SECRET:?set GitHub OAuth client secret}
+    ports:
+      - "127.0.0.1:8091:8091"

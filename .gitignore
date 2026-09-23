@@ -10,4 +10,5 @@ apps/web/dist/
 docs/
 .run/
 deploy/.env.local
+deploy/.broker.env.local
 deploy/.bootstrap-token

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -36,16 +37,41 @@ func TestRoleMatrix(t *testing.T) {
 	}
 }
 
-func TestBrowserLoginIsGithubOnly(t *testing.T) {
+func TestTokenLoginRouteRemainsAvailable(t *testing.T) {
 	router := chi.NewRouter()
 	NewServer(nil, OAuthConfig{PublicURL: "http://127.0.0.1:5173"}).Mount(router)
-	for _, path := range []string{"/api/v1/auth/token", "/api/v1/auth/tokens"} {
-		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"token":"old-token"}`))
-		response := httptest.NewRecorder()
-		router.ServeHTTP(response, request)
-		if response.Code != http.StatusNotFound {
-			t.Errorf("%s returned %d; want 404", path, response.Code)
-		}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token", strings.NewReader("invalid JSON"))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("token login route returned %d; want 400", response.Code)
+	}
+}
+
+func TestHubStartsBrokerLoginAndRejectsForgedCallback(t *testing.T) {
+	private := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+	server := NewServer(nil, OAuthConfig{PublicURL: "http://127.0.0.1:5173", BrokerURL: "http://127.0.0.1:8091", BrokerPublicKey: base64.RawURLEncoding.EncodeToString(private.Public().(ed25519.PublicKey))})
+	if !server.GithubEnabled() {
+		t.Fatal("broker login unavailable")
+	}
+	router := chi.NewRouter()
+	server.Mount(router)
+	start := httptest.NewRecorder()
+	router.ServeHTTP(start, httptest.NewRequest(http.MethodGet, "/api/v1/auth/github/start", nil))
+	if start.Code != http.StatusFound {
+		t.Fatalf("start=%d", start.Code)
+	}
+	destination, err := url.Parse(start.Header().Get("Location"))
+	if err != nil || destination.Host != "127.0.0.1:8091" || destination.Path != "/start" {
+		t.Fatalf("broker redirect=%q", start.Header().Get("Location"))
+	}
+	state := destination.Query().Get("state")
+	callback := httptest.NewRequest(http.MethodGet, "/api/v1/auth/github/broker/callback?state="+state+"&code=forged", nil)
+	callback.AddCookie(start.Result().Cookies()[0])
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, callback)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("forged callback=%d", response.Code)
 	}
 }
 

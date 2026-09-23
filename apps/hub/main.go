@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -36,12 +37,29 @@ func main() {
 			os.Exit(1)
 		}
 		defer store.DB.Close()
+		if len(os.Args) > 1 && os.Args[1] == "bootstrap-token" {
+			name := "Owner"
+			if len(os.Args) > 2 {
+				name = os.Args[2]
+			}
+			token, err := store.BootstrapOwner(context.Background(), name)
+			if err != nil {
+				logger.Error("bootstrap failed; it is allowed only before the first user exists", "error", err)
+				os.Exit(1)
+			}
+			fmt.Println(token)
+			return
+		}
 		public, err := url.Parse(settings.PublicURL)
 		if err != nil || public.Host == "" || (public.Scheme != "https" && !(public.Scheme == "http" && (public.Hostname() == "localhost" || public.Hostname() == "127.0.0.1"))) {
 			logger.Error("SINTHMUX_PUBLIC_URL must be HTTPS, except on localhost")
 			os.Exit(1)
 		}
-		authServer = auth.NewServer(store, auth.OAuthConfig{ClientID: settings.GithubClientID, ClientSecret: settings.GithubClientSecret, PublicURL: settings.PublicURL})
+		authServer = auth.NewServer(store, auth.OAuthConfig{ClientID: settings.GithubClientID, ClientSecret: settings.GithubClientSecret, PublicURL: settings.PublicURL, BrokerURL: settings.AuthBrokerURL, BrokerPublicKey: settings.AuthBrokerPublicKey})
+		if (settings.AuthBrokerURL != "" || settings.AuthBrokerPublicKey != "") && !authServer.BrokerEnabled() {
+			logger.Error("SINTHMUX_AUTH_BROKER_URL and SINTHMUX_AUTH_BROKER_PUBLIC_KEY must form a valid login broker configuration")
+			os.Exit(1)
+		}
 		authServer.OnDeviceRevoked = func(id string) { manager.Revoke(id); registry.Disconnect(id) }
 	} else {
 		host, _, err := net.SplitHostPort(settings.Address)
@@ -57,7 +75,7 @@ func main() {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "service": "sinthmux-hub", "version": version})
 	})
 	router.Get("/api/v1/system/status", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": version, "connectedDevices": len(registry.List()), "authMode": map[bool]string{true: "formal", false: "development"}[authServer != nil], "githubLoginEnabled": authServer != nil && settings.GithubClientID != "" && settings.GithubClientSecret != ""})
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": version, "connectedDevices": len(registry.List()), "authMode": map[bool]string{true: "formal", false: "development"}[authServer != nil], "githubLoginEnabled": authServer != nil && authServer.GithubEnabled()})
 	})
 	sessionAPI := sessionHandler{manager: manager}
 	terminalAPI := relay.NewTerminalHandler(manager)

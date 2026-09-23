@@ -11,13 +11,13 @@ SinthMux 让每台机器上的 Agent 主动连接 Hub，再通过网页查看和
 - **多设备管理**：查看 Agent 在线状态、系统平台和 tmux 会话。
 - **会话操作**：创建、重命名、关闭会话，或在浏览器中进入终端。
 - **持久终端**：浏览器断线后自动重连；刷新页面后可重新进入原 tmux 会话。
-- **用户与空间**：使用 GitHub 登录，管理个人及团队空间和角色权限。
+- **用户与空间**：支持 SinthMux 登录令牌、可选 GitHub 登录、个人及团队空间和角色权限。
 
 ## 快速开始
 
 ### 1. 启动 Hub、Web 和数据库
 
-准备好 Git、Docker Compose、curl 和 openssl。先在 GitHub 创建 [OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app)，配置 Homepage URL 为 `http://127.0.0.1:5173`，Authorization callback URL 为 `http://127.0.0.1:5173/api/v1/auth/github/callback`。然后克隆项目：
+准备好 Git、Docker Compose、curl 和 openssl，然后运行：
 
 ```bash
 git clone https://github.com/Absinthe-yl/SinthMux.git
@@ -25,22 +25,19 @@ cd SinthMux
 ./scripts/docker-up.sh
 ```
 
-首次运行脚本会生成被 Git 忽略的 `deploy/.env.local` 并提示配置 GitHub OAuth。把 OAuth App 的 Client ID 和 Client Secret 填入其中，保留已有数据库密码，然后再次运行脚本：
+脚本会构建 Web 和 Hub，启动 PostgreSQL，并将服务限制在本机。PostgreSQL 运行在容器中，无需在电脑上单独安装。打开 **[http://127.0.0.1:5173](http://127.0.0.1:5173)**。
 
-```dotenv
-SINTHMUX_GITHUB_CLIENT_ID=<Client ID>
-SINTHMUX_GITHUB_CLIENT_SECRET=<Client Secret>
-```
+首次启动时，脚本把 24 小时有效的初始**用户登录令牌**写入 `deploy/.bootstrap-token`。在登录页点击 **使用令牌登录**，粘贴令牌：
 
 ```bash
-./scripts/docker-up.sh
+cat deploy/.bootstrap-token
 ```
 
-脚本会构建 Web 和 Hub、启动 PostgreSQL，并将服务限制在本机。PostgreSQL 运行在容器中，无需单独安装。打开 **[http://127.0.0.1:5173](http://127.0.0.1:5173)**，点击 **使用 GitHub 登录**。数据库密码也保存在 `deploy/.env.local`，数据库内容保存在 Docker 卷中；请保留配置文件，以便下次连接同一个数据库。
+登录后，在网页的 **登录令牌** 页面创建自己的长期用户令牌，以后可直接在登录页使用。数据库密码保存在 `deploy/.env.local`，数据库内容保存在 Docker 卷中；请保留这份配置文件，以便下次连接同一个数据库。这两个文件均不会提交到 Git。
 
 ### 2. 连接本机 Agent
 
-网页登录使用 GitHub。添加设备后生成的**设备令牌**只供 Agent 连接 Hub 使用，需要配置在运行 tmux 的电脑上。当前 Docker 部署只监听本机，因此先让 Agent 与 Hub 运行在同一台电脑。准备 Go 1.25+、tmux 和 make：
+网页登录可使用 GitHub 或**用户登录令牌**。添加设备后生成的**设备令牌**只供 Agent 连接 Hub 使用，需要配置在运行 tmux 的电脑上。当前 Docker 部署只监听本机，因此先让 Agent 与 Hub 运行在同一台电脑。准备 Go 1.25+、tmux 和 make：
 
 1. 登录 SinthMux 网页，点击 **添加设备**，复制页面显示的 Agent 配置（包含设备 ID 和设备令牌）。
 2. 在仓库根目录创建被 Git 忽略的 `.env`，写入刚才得到的值：
@@ -85,7 +82,7 @@ make quickstart
 | --- | --- |
 | Agent 主动连接、心跳与重连 | 已实现 |
 | tmux 会话管理与浏览器终端 | 已实现 |
-| GitHub 登录、空间和角色权限 | 已实现；需配置 GitHub OAuth |
+| 令牌登录、GitHub 登录、空间和角色权限 | 已实现；GitHub 登录需配置 OAuth |
 | PostgreSQL 持久化与本机 Docker 启动 | 已实现；Docker 容器仍待实机验证 |
 | Agent 安装包、设备配对、mTLS、公网 HTTPS 部署 | 待完成 |
 
@@ -111,4 +108,30 @@ make proto  # 验证 Protobuf 定义，需要 protoc
 
 设置 `SINTHMUX_TEST_DATABASE_URL` 后，`make test` 还会运行 PostgreSQL 集成测试。当前通信使用 JSON envelope；[Protobuf 定义](proto/sinthmux/v1/agent.proto)尚未接入运行链路。
 
-GitHub 登录需为 Hub 配置 `SINTHMUX_GITHUB_CLIENT_ID`、`SINTHMUX_GITHUB_CLIENT_SECRET` 和 `SINTHMUX_PUBLIC_URL`。OAuth 回调地址为 `<SINTHMUX_PUBLIC_URL>/api/v1/auth/github/callback`。
+### 统一 GitHub 登录服务
+
+登录服务只需部署一份，集中保存 GitHub OAuth App 的 Client ID 和 Client Secret。每个 Hub 配置登录服务地址及 Ed25519 公钥后，即可显示 **使用 GitHub 登录**；网页登录也始终保留 **使用令牌登录**。登录服务尚未部署到正式域名，当前克隆项目可先用令牌登录。
+
+部署登录服务时，在 GitHub 创建 [OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app)，回调地址设为 `https://login.example.com/callback`。运行 `go run ./apps/login-broker keygen` 生成签名密钥。将私钥种子和 GitHub 凭据写入被 Git 忽略的 `deploy/.broker.env.local`：
+
+```dotenv
+SINTHMUX_BROKER_PUBLIC_URL=https://login.example.com
+SINTHMUX_BROKER_SIGNING_SEED=<keygen 输出的私钥种子>
+SINTHMUX_GITHUB_CLIENT_ID=<GitHub Client ID>
+SINTHMUX_GITHUB_CLIENT_SECRET=<GitHub Client Secret>
+```
+
+启动登录服务：
+
+```bash
+docker compose --env-file deploy/.broker.env.local -f deploy/login-broker.compose.yml up -d --build
+```
+
+将 HTTPS 反向代理指向本机 `127.0.0.1:8091`。每个 Hub 在 `deploy/.env.local` 中配置：
+
+```dotenv
+SINTHMUX_AUTH_BROKER_URL=https://login.example.com
+SINTHMUX_AUTH_BROKER_PUBLIC_KEY=<keygen 输出的公钥>
+```
+
+Hub 的 `SINTHMUX_PUBLIC_URL` 必须是浏览器能打开的地址。公网 Hub 使用 HTTPS；本机联调可使用 `http://127.0.0.1:5173`。登录服务收到 GitHub 回调后只向 Hub 传一次性兑换码；Hub 经后端交换并验签，GitHub 访问令牌不会进入 Hub 或浏览器地址。若要在单个 Hub 上直接配置 GitHub OAuth，也可继续设置 `SINTHMUX_GITHUB_CLIENT_ID`、`SINTHMUX_GITHUB_CLIENT_SECRET` 和 `SINTHMUX_PUBLIC_URL`，回调地址为 `<SINTHMUX_PUBLIC_URL>/api/v1/auth/github/callback`。

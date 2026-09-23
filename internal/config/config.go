@@ -3,12 +3,14 @@ package config
 import "os"
 
 type Hub struct {
-	Address            string
-	DevToken           string
-	DatabaseURL        string
-	PublicURL          string
-	GithubClientID     string
-	GithubClientSecret string
+	Address             string
+	DevToken            string
+	DatabaseURL         string
+	PublicURL           string
+	GithubClientID      string
+	GithubClientSecret  string
+	AuthBrokerURL       string
+	AuthBrokerPublicKey string
 }
 
 type Agent struct {
@@ -21,12 +23,14 @@ type Agent struct {
 
 func HubFromEnv() Hub {
 	return Hub{
-		Address:            env("SINTHMUX_HUB_ADDR", "127.0.0.1:8090"),
-		DevToken:           env("SINTHMUX_DEV_TOKEN", "sinthmux-local-dev"),
-		DatabaseURL:        os.Getenv("SINTHMUX_DATABASE_URL"),
-		PublicURL:          os.Getenv("SINTHMUX_PUBLIC_URL"),
-		GithubClientID:     os.Getenv("SINTHMUX_GITHUB_CLIENT_ID"),
-		GithubClientSecret: os.Getenv("SINTHMUX_GITHUB_CLIENT_SECRET"),
+		Address:             env("SINTHMUX_HUB_ADDR", "127.0.0.1:8090"),
+		DevToken:            env("SINTHMUX_DEV_TOKEN", "sinthmux-local-dev"),
+		DatabaseURL:         os.Getenv("SINTHMUX_DATABASE_URL"),
+		PublicURL:           os.Getenv("SINTHMUX_PUBLIC_URL"),
+		GithubClientID:      os.Getenv("SINTHMUX_GITHUB_CLIENT_ID"),
+		GithubClientSecret:  os.Getenv("SINTHMUX_GITHUB_CLIENT_SECRET"),
+		AuthBrokerURL:       os.Getenv("SINTHMUX_AUTH_BROKER_URL"),
+		AuthBrokerPublicKey: os.Getenv("SINTHMUX_AUTH_BROKER_PUBLIC_KEY"),
 	}
 }
 
