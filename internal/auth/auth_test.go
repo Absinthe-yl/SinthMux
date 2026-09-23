@@ -36,6 +36,19 @@ func TestRoleMatrix(t *testing.T) {
 	}
 }
 
+func TestBrowserLoginIsGithubOnly(t *testing.T) {
+	router := chi.NewRouter()
+	NewServer(nil, OAuthConfig{PublicURL: "http://127.0.0.1:5173"}).Mount(router)
+	for _, path := range []string{"/api/v1/auth/token", "/api/v1/auth/tokens"} {
+		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"token":"old-token"}`))
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusNotFound {
+			t.Errorf("%s returned %d; want 404", path, response.Code)
+		}
+	}
+}
+
 func TestFormalStoreIntegration(t *testing.T) {
 	dsn := os.Getenv("SINTHMUX_TEST_DATABASE_URL")
 	if dsn == "" {

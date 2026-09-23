@@ -18,7 +18,12 @@ fi
 umask 077
 compose_env=deploy/.env.local
 if [[ ! -f "$compose_env" ]]; then
-  printf 'SINTHMUX_COMPOSE_DB_PASSWORD=%s\n' "$(openssl rand -hex 24)" > "$compose_env"
+  printf 'SINTHMUX_COMPOSE_DB_PASSWORD=%s\nSINTHMUX_GITHUB_CLIENT_ID=\nSINTHMUX_GITHUB_CLIENT_SECRET=\n' "$(openssl rand -hex 24)" > "$compose_env"
+fi
+if { [[ -z "${SINTHMUX_GITHUB_CLIENT_ID:-}" ]] && ! grep -q '^SINTHMUX_GITHUB_CLIENT_ID=.' "$compose_env"; } ||
+   { [[ -z "${SINTHMUX_GITHUB_CLIENT_SECRET:-}" ]] && ! grep -q '^SINTHMUX_GITHUB_CLIENT_SECRET=.' "$compose_env"; }; then
+  printf '请先在 %s 配置 GitHub OAuth Client ID 和 Client Secret。回调地址：http://127.0.0.1:5173/api/v1/auth/github/callback\n' "$compose_env" >&2
+  exit 1
 fi
 compose=(docker compose --env-file "$compose_env" -f deploy/docker-compose.yml)
 
@@ -33,14 +38,5 @@ if ! curl --silent --fail http://127.0.0.1:5173/health >/dev/null; then
   exit 1
 fi
 
-bootstrap=deploy/.bootstrap-token
-if [[ ! -f "$bootstrap" ]]; then
-  if token="$("${compose[@]}" run --rm -T hub bootstrap-token Owner)" && [[ "$token" =~ ^smt_[0-9a-f]{32}_[0-9a-f]{64}$ ]]; then
-    printf '%s\n' "$token" > "$bootstrap"
-    printf '首次登录令牌已保存到 %s（24 小时内有效）。\n' "$bootstrap"
-  else
-    printf '未生成首次令牌。若数据库已有用户，请使用此前创建的登录令牌；否则检查 Hub 日志。\n'
-  fi
-fi
 printf 'SinthMux 已启动：http://127.0.0.1:5173/\n'
-printf '创建浏览器登录后，在页面添加设备，再为本机 Agent 配置设备令牌。\n'
+printf '使用 GitHub 登录后，在页面添加设备，再为本机 Agent 配置设备令牌。\n'

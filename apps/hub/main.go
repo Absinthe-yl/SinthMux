@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -37,19 +36,6 @@ func main() {
 			os.Exit(1)
 		}
 		defer store.DB.Close()
-		if len(os.Args) > 1 && os.Args[1] == "bootstrap-token" {
-			name := "Owner"
-			if len(os.Args) > 2 {
-				name = os.Args[2]
-			}
-			token, err := store.BootstrapOwner(context.Background(), name)
-			if err != nil {
-				logger.Error("bootstrap failed; it is allowed only before the first user exists", "error", err)
-				os.Exit(1)
-			}
-			fmt.Println(token)
-			return
-		}
 		public, err := url.Parse(settings.PublicURL)
 		if err != nil || public.Host == "" || (public.Scheme != "https" && !(public.Scheme == "http" && (public.Hostname() == "localhost" || public.Hostname() == "127.0.0.1"))) {
 			logger.Error("SINTHMUX_PUBLIC_URL must be HTTPS, except on localhost")
