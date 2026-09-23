@@ -40,6 +40,7 @@ function Login({ githubEnabled, theme, onToggleTheme, onLogin }: { githubEnabled
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [githubNotice, setGithubNotice] = useState(false);
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError("");
     try { await request("/api/v1/auth/token", { method: "POST", body: JSON.stringify({ token }) }); setToken(""); onLogin(); }
@@ -52,7 +53,10 @@ function Login({ githubEnabled, theme, onToggleTheme, onLogin }: { githubEnabled
       <span className="login-mark" aria-hidden="true">S/</span>
       <h1>SinthMux</h1>
       <p>终端继续运行，回来接着用。</p>
-      {githubEnabled && <a className="github-login" href="/api/v1/auth/github/start">使用 GitHub 登录</a>}
+      {githubEnabled
+        ? <a className="github-login" href="/api/v1/auth/github/start">使用 GitHub 登录</a>
+        : <button className="github-login" type="button" onClick={() => setGithubNotice(true)}>使用 GitHub 登录</button>}
+      {githubNotice && !githubEnabled && <div className="notice">当前服务尚未配置 GitHub 登录。请由部署者配置 OAuth 或统一登录服务。</div>}
       {showToken ? <form className="login-token-form" onSubmit={(event) => void submit(event)}>
         <label htmlFor="login-token">用户令牌</label>
         <input id="login-token" type="password" autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} required autoFocus />
