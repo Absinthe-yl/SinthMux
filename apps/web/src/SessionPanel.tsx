@@ -58,7 +58,7 @@ export default function SessionPanel({ deviceId, online, canManage, canClose, ca
     <div className="sessions-header"><strong>会话 <span>{sessions.data?.sessions.length ?? "—"}</span></strong>{online && canManage && <button className="new-session-button" type="button" onClick={() => { setCreating(!creating); setInputError(""); action.reset(); }}><Plus />新建会话</button>}</div>
     {creating && <form className="session-form create-form" onSubmit={create}><label className="sr-only" htmlFor={`new-session-${deviceId}`}>新会话名称</label><input id={`new-session-${deviceId}`} autoFocus placeholder="会话名称" value={newName} onChange={(event) => setNewName(event.target.value)} maxLength={64} disabled={action.isPending} /><button type="submit" disabled={action.isPending}>创建</button><button type="button" className="subtle-button" onClick={() => setCreating(false)}>取消</button></form>}
     {!online && <p className="session-note">设备离线</p>}
-    {online && !canManage && <p className="session-note">{canOpen ? "Agent 尚不支持会话管理" : "当前角色只能查看会话列表"}</p>}
+    {online && !canManage && <p className="session-note">{canOpen ? "设备代理尚不支持会话管理" : "当前角色只能查看会话列表"}</p>}
     {inputError && <div className="notice error">{inputError}</div>}
     {action.isError && <div className="notice error">操作失败：{action.error.message}</div>}
     {sessions.isPending ? <p className="session-note">正在读取会话…</p> : sessions.isError ? <div className="notice error">读取失败：{sessions.error.message} <button className="text-button" type="button" onClick={() => sessions.refetch()}>重试</button></div> : sessions.data.sessions.length === 0 ? <p className="session-note empty-sessions">暂无会话</p> : <ul className="session-list">{sessions.data.sessions.map((session) => <li className="session-row" key={session.name}>

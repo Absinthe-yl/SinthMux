@@ -18,13 +18,13 @@ import (
 const version = "0.0.1-dev"
 
 func main() {
-	settings := config.AgentFromEnv()
+	settings := config.ConnectorFromEnv()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	backoff := time.Second
 
 	for {
 		if err := run(context.Background(), settings, logger); err != nil {
-			logger.Warn("agent disconnected", "error", err, "retryIn", backoff)
+			logger.Warn("connector disconnected", "error", err, "retryIn", backoff)
 			time.Sleep(backoff)
 			if backoff < 15*time.Second {
 				backoff *= 2
@@ -35,7 +35,7 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, settings config.Agent, logger *slog.Logger) error {
+func run(ctx context.Context, settings config.Connector, logger *slog.Logger) error {
 	headers := http.Header{"Authorization": []string{"Bearer " + settings.DevToken}}
 	if settings.DeviceToken != "" {
 		headers.Set("Authorization", "Bearer "+settings.DeviceToken)
@@ -56,11 +56,11 @@ func run(ctx context.Context, settings config.Agent, logger *slog.Logger) error 
 	streams := newTerminalStreams(send)
 	defer streams.closeAll()
 
-	hello := protocol.Envelope{Version: protocol.Version, Type: protocol.MessageAgentHello, Hello: &protocol.AgentHello{DeviceID: settings.DeviceID, Name: settings.Name, Platform: runtime.GOOS, Architecture: runtime.GOARCH, AgentVersion: version, Capabilities: []string{"device.info", "tmux.sessions.list", "tmux.sessions.manage", "terminal.stream"}}}
+	hello := protocol.Envelope{Version: protocol.Version, Type: protocol.MessageConnectorHello, Hello: &protocol.ConnectorHello{DeviceID: settings.DeviceID, Name: settings.Name, Platform: runtime.GOOS, Architecture: runtime.GOARCH, ConnectorVersion: version, Capabilities: []string{"device.info", "tmux.sessions.list", "tmux.sessions.manage", "terminal.stream"}}}
 	if err := send(hello); err != nil {
 		return err
 	}
-	logger.Info("agent connected", "hub", settings.HubURL, "deviceId", settings.DeviceID)
+	logger.Info("connector connected", "hub", settings.HubURL, "deviceId", settings.DeviceID)
 
 	readErrors := make(chan error, 1)
 	go func() {

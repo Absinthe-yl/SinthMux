@@ -13,7 +13,7 @@ type Hub struct {
 	AuthBrokerPublicKey string
 }
 
-type Agent struct {
+type Connector struct {
 	HubURL      string
 	DevToken    string
 	DeviceToken string
@@ -34,13 +34,13 @@ func HubFromEnv() Hub {
 	}
 }
 
-func AgentFromEnv() Agent {
-	return Agent{
-		HubURL:      env("SINTHMUX_AGENT_HUB_URL", "ws://127.0.0.1:8090/ws/v1/agents/connect"),
+func ConnectorFromEnv() Connector {
+	return Connector{
+		HubURL:      env("SINTHMUX_CONNECTOR_HUB_URL", "ws://127.0.0.1:8090/ws/v1/connectors/connect"),
 		DevToken:    env("SINTHMUX_DEV_TOKEN", "sinthmux-local-dev"),
-		DeviceToken: os.Getenv("SINTHMUX_AGENT_DEVICE_TOKEN"),
-		DeviceID:    env("SINTHMUX_AGENT_DEVICE_ID", "local-dev"),
-		Name:        env("SINTHMUX_AGENT_NAME", "Local Development Machine"),
+		DeviceToken: os.Getenv("SINTHMUX_CONNECTOR_DEVICE_TOKEN"),
+		DeviceID:    env("SINTHMUX_CONNECTOR_DEVICE_ID", "local-dev"),
+		Name:        env("SINTHMUX_CONNECTOR_NAME", "Local Development Machine"),
 	}
 }
 

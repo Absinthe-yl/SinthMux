@@ -13,9 +13,9 @@ import (
 )
 
 var (
-	ErrOffline          = errors.New("agent is offline")
-	ErrTimeout          = errors.New("agent RPC timed out")
-	ErrInvalidResponse  = errors.New("invalid agent RPC response")
+	ErrOffline          = errors.New("connector is offline")
+	ErrTimeout          = errors.New("connector RPC timed out")
+	ErrInvalidResponse  = errors.New("invalid connector RPC response")
 	ErrDuplicateRequest = errors.New("duplicate request ID")
 )
 
@@ -24,7 +24,7 @@ type rpcResult struct {
 	err      error
 }
 
-type agentConnection struct {
+type connectorConnection struct {
 	conn    *websocket.Conn
 	mu      sync.Mutex
 	pending map[string]chan rpcResult
@@ -32,13 +32,13 @@ type agentConnection struct {
 	writeMu sync.Mutex
 }
 
-func (a *agentConnection) send(ctx context.Context, envelope protocol.Envelope) error {
+func (a *connectorConnection) send(ctx context.Context, envelope protocol.Envelope) error {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 	return writeEnvelope(ctx, a.conn, envelope)
 }
 
-func (a *agentConnection) finish(id string, result rpcResult) bool {
+func (a *connectorConnection) finish(id string, result rpcResult) bool {
 	a.mu.Lock()
 	ch, ok := a.pending[id]
 	if ok {
@@ -49,7 +49,7 @@ func (a *agentConnection) finish(id string, result rpcResult) bool {
 	return ok
 }
 
-func (a *agentConnection) failAll(err error) {
+func (a *connectorConnection) failAll(err error) {
 	a.mu.Lock()
 	for id, ch := range a.pending {
 		delete(a.pending, id)
@@ -68,7 +68,7 @@ func (a *agentConnection) failAll(err error) {
 	a.mu.Unlock()
 }
 
-func (a *agentConnection) streamEvent(envelope protocol.Envelope) {
+func (a *connectorConnection) streamEvent(envelope protocol.Envelope) {
 	var id string
 	switch envelope.Type {
 	case protocol.MessageStreamData:
@@ -101,42 +101,42 @@ func (a *agentConnection) streamEvent(envelope protocol.Envelope) {
 }
 
 type Manager struct {
-	mu      sync.RWMutex
-	agents  map[string]*agentConnection
-	Timeout time.Duration
+	mu         sync.RWMutex
+	connectors map[string]*connectorConnection
+	Timeout    time.Duration
 }
 
 func NewManager() *Manager {
-	return &Manager{agents: make(map[string]*agentConnection), Timeout: 10 * time.Second}
+	return &Manager{connectors: make(map[string]*connectorConnection), Timeout: 10 * time.Second}
 }
 
-func (m *Manager) Register(id string, conn *websocket.Conn) *agentConnection {
-	newAgent := &agentConnection{conn: conn, pending: make(map[string]chan rpcResult), streams: make(map[string]chan protocol.Envelope)}
+func (m *Manager) Register(id string, conn *websocket.Conn) *connectorConnection {
+	newConnector := &connectorConnection{conn: conn, pending: make(map[string]chan rpcResult), streams: make(map[string]chan protocol.Envelope)}
 	m.mu.Lock()
-	old := m.agents[id]
-	m.agents[id] = newAgent
+	old := m.connectors[id]
+	m.connectors[id] = newConnector
 	m.mu.Unlock()
 	if old != nil {
 		old.failAll(ErrOffline)
 		old.conn.CloseNow()
 	}
-	return newAgent
+	return newConnector
 }
 
 func (m *Manager) Online(id string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.agents[id] != nil
+	return m.connectors[id] != nil
 }
 
 func (m *Manager) Revoke(id string) {
 	m.mu.Lock()
-	agent := m.agents[id]
-	delete(m.agents, id)
+	connector := m.connectors[id]
+	delete(m.connectors, id)
 	m.mu.Unlock()
-	if agent != nil {
-		agent.failAll(ErrOffline)
-		agent.conn.CloseNow()
+	if connector != nil {
+		connector.failAll(ErrOffline)
+		connector.conn.CloseNow()
 	}
 }
 
@@ -147,25 +147,25 @@ func (m *Manager) OpenStream(ctx context.Context, deviceID, session string, cols
 	}
 	id := hex.EncodeToString(idBytes)
 	m.mu.RLock()
-	agent := m.agents[deviceID]
-	if agent == nil {
+	connector := m.connectors[deviceID]
+	if connector == nil {
 		m.mu.RUnlock()
 		return "", nil, nil, ErrOffline
 	}
 	ch := make(chan protocol.Envelope, 64)
-	agent.mu.Lock()
-	agent.streams[id] = ch
-	agent.mu.Unlock()
+	connector.mu.Lock()
+	connector.streams[id] = ch
+	connector.mu.Unlock()
 	m.mu.RUnlock()
 	closeStream := func() {
-		agent.mu.Lock()
-		delete(agent.streams, id)
-		agent.mu.Unlock()
+		connector.mu.Lock()
+		delete(connector.streams, id)
+		connector.mu.Unlock()
 		closeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_ = agent.send(closeCtx, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageStreamClose, StreamClose: &protocol.StreamClose{StreamID: id}})
+		_ = connector.send(closeCtx, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageStreamClose, StreamClose: &protocol.StreamClose{StreamID: id}})
 	}
-	if err := agent.send(ctx, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageStreamOpen, StreamOpen: &protocol.StreamOpen{StreamID: id, Session: session, Cols: cols, Rows: rows}}); err != nil {
+	if err := connector.send(ctx, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageStreamOpen, StreamOpen: &protocol.StreamOpen{StreamID: id, Session: session, Cols: cols, Rows: rows}}); err != nil {
 		closeStream()
 		return "", nil, nil, err
 	}
@@ -174,32 +174,32 @@ func (m *Manager) OpenStream(ctx context.Context, deviceID, session string, cols
 
 func (m *Manager) SendStream(ctx context.Context, deviceID, id string, envelope protocol.Envelope) error {
 	m.mu.RLock()
-	agent := m.agents[deviceID]
-	if agent == nil {
+	connector := m.connectors[deviceID]
+	if connector == nil {
 		m.mu.RUnlock()
 		return ErrOffline
 	}
-	agent.mu.Lock()
-	_, exists := agent.streams[id]
-	agent.mu.Unlock()
+	connector.mu.Lock()
+	_, exists := connector.streams[id]
+	connector.mu.Unlock()
 	m.mu.RUnlock()
 	if !exists {
 		return ErrOffline
 	}
-	return agent.send(ctx, envelope)
+	return connector.send(ctx, envelope)
 }
 
-// Unregister only removes the connection being closed, so an older agent cannot
+// Unregister only removes the connection being closed, so an older connector cannot
 // mark a replacement connection offline.
-func (m *Manager) Unregister(id string, agent *agentConnection) bool {
+func (m *Manager) Unregister(id string, connector *connectorConnection) bool {
 	m.mu.Lock()
-	if m.agents[id] != agent {
+	if m.connectors[id] != connector {
 		m.mu.Unlock()
 		return false
 	}
-	delete(m.agents, id)
+	delete(m.connectors, id)
 	m.mu.Unlock()
-	agent.failAll(ErrOffline)
+	connector.failAll(ErrOffline)
 	return true
 }
 
@@ -213,22 +213,22 @@ func (m *Manager) Call(ctx context.Context, deviceID string, request protocol.RP
 
 func (m *Manager) callWithID(ctx context.Context, deviceID, requestID string, request protocol.RPCRequest) (*protocol.RPCResponse, error) {
 	m.mu.RLock()
-	agent := m.agents[deviceID]
-	if agent == nil {
+	connector := m.connectors[deviceID]
+	if connector == nil {
 		m.mu.RUnlock()
 		return nil, ErrOffline
 	}
-	agent.mu.Lock()
-	if _, exists := agent.pending[requestID]; exists {
-		agent.mu.Unlock()
+	connector.mu.Lock()
+	if _, exists := connector.pending[requestID]; exists {
+		connector.mu.Unlock()
 		m.mu.RUnlock()
 		return nil, ErrDuplicateRequest
 	}
 	resultCh := make(chan rpcResult, 1)
-	agent.pending[requestID] = resultCh
-	agent.mu.Unlock()
+	connector.pending[requestID] = resultCh
+	connector.mu.Unlock()
 	m.mu.RUnlock()
-	defer agent.finish(requestID, rpcResult{})
+	defer connector.finish(requestID, rpcResult{})
 
 	timeout := m.Timeout
 	if timeout <= 0 {
@@ -236,7 +236,7 @@ func (m *Manager) callWithID(ctx context.Context, deviceID, requestID string, re
 	}
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	if err := agent.send(callCtx, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageRPCRequest, RequestID: requestID, Request: &request}); err != nil {
+	if err := connector.send(callCtx, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageRPCRequest, RequestID: requestID, Request: &request}); err != nil {
 		return nil, err
 	}
 	select {

@@ -43,4 +43,4 @@ if [[ ! -f "$bootstrap" ]]; then
   fi
 fi
 printf 'SinthMux 已启动：http://127.0.0.1:5173/\n'
-printf '创建浏览器登录后，在页面添加设备，再为本机 Agent 配置设备令牌。\n'
+printf '创建浏览器登录后，在页面添加设备，再为本机设备代理配置设备令牌。\n'

@@ -126,34 +126,34 @@ func TestFormalStoreIntegration(t *testing.T) {
 	}
 	manager := relay.NewManager()
 	registry := devices.NewRegistry()
-	agentHTTP := relay.AgentHandler{Registry: registry, Manager: manager, AuthenticateDevice: func(ctx context.Context, id, authorization string) bool {
+	connectorHTTP := relay.ConnectorHandler{Registry: registry, Manager: manager, AuthenticateDevice: func(ctx context.Context, id, authorization string) bool {
 		return strings.HasPrefix(authorization, "Bearer ") && s.AuthenticateDevice(ctx, id, strings.TrimPrefix(authorization, "Bearer "))
 	}}
-	agentServer := httptest.NewServer(agentHTTP)
-	defer agentServer.Close()
-	wsURL := "ws" + strings.TrimPrefix(agentServer.URL, "http")
+	connectorServer := httptest.NewServer(connectorHTTP)
+	defer connectorServer.Close()
+	wsURL := "ws" + strings.TrimPrefix(connectorServer.URL, "http")
 	_, _, err = websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer bad"}, "X-Sinthmux-Device-ID": {device.ID}}})
 	if err == nil {
-		t.Fatal("agent accepted invalid credential")
+		t.Fatal("connector accepted invalid credential")
 	}
 	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + deviceToken}, "X-Sinthmux-Device-ID": {device.ID}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrongHello, _ := json.Marshal(protocol.Envelope{Version: protocol.Version, Type: protocol.MessageAgentHello, Hello: &protocol.AgentHello{DeviceID: "other-device"}})
+	wrongHello, _ := json.Marshal(protocol.Envelope{Version: protocol.Version, Type: protocol.MessageConnectorHello, Hello: &protocol.ConnectorHello{DeviceID: "other-device"}})
 	if err := conn.Write(ctx, websocket.MessageText, wrongHello); err != nil {
 		t.Fatal(err)
 	}
 	_, _, _ = conn.Read(ctx)
 	conn.CloseNow()
 	if manager.Online("other-device") {
-		t.Fatal("agent changed its authenticated device ID")
+		t.Fatal("connector changed its authenticated device ID")
 	}
 	conn, _, err = websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + deviceToken}, "X-Sinthmux-Device-ID": {device.ID}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	validHello, _ := json.Marshal(protocol.Envelope{Version: protocol.Version, Type: protocol.MessageAgentHello, Hello: &protocol.AgentHello{DeviceID: device.ID, Name: "agent"}})
+	validHello, _ := json.Marshal(protocol.Envelope{Version: protocol.Version, Type: protocol.MessageConnectorHello, Hello: &protocol.ConnectorHello{DeviceID: device.ID, Name: "connector"}})
 	if err := conn.Write(ctx, websocket.MessageText, validHello); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestFormalStoreIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !manager.Online(device.ID) {
-		t.Fatal("authenticated agent not registered")
+		t.Fatal("authenticated connector not registered")
 	}
 	conn.CloseNow()
 	if !s.TerminalAllowed(ctx, owner.ID, device.ID, spaceID, session.IDHash) {

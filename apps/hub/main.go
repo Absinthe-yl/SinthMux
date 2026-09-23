@@ -171,13 +171,13 @@ func main() {
 		register(router)
 	}
 	router.Handle("/ws/v1/terminal", terminalAPI)
-	agentHandler := relay.AgentHandler{Registry: registry, Manager: manager, DevToken: settings.DevToken}
+	connectorHandler := relay.ConnectorHandler{Registry: registry, Manager: manager, DevToken: settings.DevToken}
 	if authServer != nil {
-		agentHandler.AuthenticateDevice = func(ctx context.Context, id, authorization string) bool {
+		connectorHandler.AuthenticateDevice = func(ctx context.Context, id, authorization string) bool {
 			return strings.HasPrefix(authorization, "Bearer ") && authServer.Store.AuthenticateDevice(ctx, id, strings.TrimPrefix(authorization, "Bearer "))
 		}
 	}
-	router.Handle("/ws/v1/agents/connect", agentHandler)
+	router.Handle("/ws/v1/connectors/connect", connectorHandler)
 
 	server := &http.Server{Addr: settings.Address, Handler: router, ReadHeaderTimeout: 5 * time.Second}
 	logger.Info("SinthMux Hub listening", "address", settings.Address, "version", version)

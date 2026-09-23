@@ -1,9 +1,9 @@
-.PHONY: quickstart docker-up docker-down dev-hub dev-agent dev-web build test fmt proto
+.PHONY: quickstart docker-up docker-down dev-hub dev-connector dev-web build test fmt proto
 
 -include .env
 export SINTHMUX_HUB_ADDR SINTHMUX_DEV_TOKEN SINTHMUX_DATABASE_URL SINTHMUX_TEST_DATABASE_URL
 export SINTHMUX_PUBLIC_URL SINTHMUX_GITHUB_CLIENT_ID SINTHMUX_GITHUB_CLIENT_SECRET
-export SINTHMUX_AGENT_HUB_URL SINTHMUX_AGENT_DEVICE_ID SINTHMUX_AGENT_DEVICE_TOKEN SINTHMUX_AGENT_NAME
+export SINTHMUX_CONNECTOR_HUB_URL SINTHMUX_CONNECTOR_DEVICE_ID SINTHMUX_CONNECTOR_DEVICE_TOKEN SINTHMUX_CONNECTOR_NAME
 
 quickstart:
 	./scripts/quickstart.sh
@@ -17,8 +17,8 @@ docker-down:
 dev-hub:
 	go run ./apps/hub
 
-dev-agent:
-	go run ./apps/agent
+dev-connector:
+	go run ./apps/connector
 
 dev-web:
 	npm --prefix apps/web run dev
@@ -35,4 +35,4 @@ fmt:
 	gofmt -w apps internal pkg
 
 proto:
-	protoc --descriptor_set_out=/tmp/sinthmux-protocol.pb proto/sinthmux/v1/agent.proto
+	protoc --descriptor_set_out=/tmp/sinthmux-protocol.pb proto/sinthmux/v1/connector.proto

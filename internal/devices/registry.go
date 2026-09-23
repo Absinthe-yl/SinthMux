@@ -9,16 +9,16 @@ import (
 )
 
 type Device struct {
-	ID           string    `json:"id"`
-	SpaceID      string    `json:"spaceId,omitempty"`
-	Name         string    `json:"name"`
-	Platform     string    `json:"platform"`
-	Architecture string    `json:"architecture"`
-	AgentVersion string    `json:"agentVersion"`
-	Capabilities []string  `json:"capabilities"`
-	Status       string    `json:"status"`
-	ConnectedAt  time.Time `json:"connectedAt"`
-	LastSeenAt   time.Time `json:"lastSeenAt"`
+	ID               string    `json:"id"`
+	SpaceID          string    `json:"spaceId,omitempty"`
+	Name             string    `json:"name"`
+	Platform         string    `json:"platform"`
+	Architecture     string    `json:"architecture"`
+	ConnectorVersion string    `json:"connectorVersion"`
+	Capabilities     []string  `json:"capabilities"`
+	Status           string    `json:"status"`
+	ConnectedAt      time.Time `json:"connectedAt"`
+	LastSeenAt       time.Time `json:"lastSeenAt"`
 }
 
 type Registry struct {
@@ -30,9 +30,9 @@ func NewRegistry() *Registry {
 	return &Registry{devices: make(map[string]Device)}
 }
 
-func (r *Registry) Connect(hello protocol.AgentHello) Device {
+func (r *Registry) Connect(hello protocol.ConnectorHello) Device {
 	now := time.Now().UTC()
-	device := Device{ID: hello.DeviceID, Name: hello.Name, Platform: hello.Platform, Architecture: hello.Architecture, AgentVersion: hello.AgentVersion, Capabilities: hello.Capabilities, Status: "online", ConnectedAt: now, LastSeenAt: now}
+	device := Device{ID: hello.DeviceID, Name: hello.Name, Platform: hello.Platform, Architecture: hello.Architecture, ConnectorVersion: hello.ConnectorVersion, Capabilities: hello.Capabilities, Status: "online", ConnectedAt: now, LastSeenAt: now}
 	r.mu.Lock()
 	r.devices[device.ID] = device
 	r.mu.Unlock()

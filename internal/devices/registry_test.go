@@ -8,7 +8,7 @@ import (
 
 func TestRegistryLifecycle(t *testing.T) {
 	registry := NewRegistry()
-	registry.Connect(protocol.AgentHello{DeviceID: "laptop", Name: "Laptop"})
+	registry.Connect(protocol.ConnectorHello{DeviceID: "laptop", Name: "Laptop"})
 	registry.Touch("laptop")
 	registry.Disconnect("laptop")
 

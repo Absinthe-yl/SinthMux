@@ -25,7 +25,7 @@ func TestSessionAPI(t *testing.T) {
 	router.Post("/api/v1/devices/{deviceId}/sessions", api.create)
 	router.Patch("/api/v1/devices/{deviceId}/sessions/{sessionName}", api.rename)
 	router.Delete("/api/v1/devices/{deviceId}/sessions/{sessionName}", api.close)
-	router.Handle("/ws", relay.AgentHandler{Registry: devices.NewRegistry(), Manager: manager, DevToken: "test"})
+	router.Handle("/ws", relay.ConnectorHandler{Registry: devices.NewRegistry(), Manager: manager, DevToken: "test"})
 	server := httptest.NewServer(router)
 	defer server.Close()
 
@@ -70,7 +70,7 @@ func TestSessionAPI(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(protocol.Envelope{Version: protocol.Version, Type: protocol.MessageAgentHello, Hello: &protocol.AgentHello{DeviceID: "test-device"}})
+	write(protocol.Envelope{Version: protocol.Version, Type: protocol.MessageConnectorHello, Hello: &protocol.ConnectorHello{DeviceID: "test-device"}})
 	if _, _, err := conn.Read(ctx); err != nil {
 		t.Fatal(err)
 	}

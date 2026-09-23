@@ -12,7 +12,7 @@ type Device = {
   name: string;
   platform: string;
   architecture: string;
-  agentVersion: string;
+  connectorVersion: string;
   status: string;
   capabilities?: string[];
 };
@@ -75,7 +75,7 @@ function DeviceCard({ device, expanded, onToggle, onOpen, onRevoke, role }: { de
       <div className="device-icon" aria-hidden="true">{device.platform === "darwin" ? <Laptop /> : <Server />}</div>
       <div className="device-info">
         <div className="device-title"><h2>{device.name}</h2><span className={`status-dot${online ? " online" : ""}`} /><span className="status-text">{online ? "在线" : "离线"}</span></div>
-        <p>{device.platform} / {device.architecture} <span>·</span> Agent {device.agentVersion}</p>
+        <p>{device.platform} / {device.architecture} <span>·</span> 设备代理 {device.connectorVersion}</p>
       </div>
       {onRevoke && <button className="device-revoke" type="button" onClick={onRevoke}>移除</button>}<button className="device-toggle" type="button" aria-expanded={expanded} onClick={onToggle}>{expanded ? "收起" : "会话"}{expanded ? <ChevronUp /> : <ChevronDown />}</button>
     </div>
@@ -112,13 +112,13 @@ export default function App() {
   async function runAction(action: () => Promise<void>) { setNotice(""); try { await action(); await queryClient.invalidateQueries(); } catch (error) { setNotice(error instanceof Error ? error.message : "操作失败"); } }
   async function createToken() { const name = window.prompt("令牌名称", "我的登录令牌"); if (!name) return; await runAction(async () => { const result = await request<{ token: string }>("/api/v1/auth/tokens", { method: "POST", body: JSON.stringify({ name }) }); setSecretCopied(false); setSecret({ label: "登录令牌（仅显示一次）", value: result.token }); }); }
   async function createSpace() { const name = window.prompt("空间名称"); if (!name) return; await runAction(async () => { const space = await request<Space>("/api/v1/spaces", { method: "POST", body: JSON.stringify({ name }) }); setSelectedSpace(space.id); }); }
-  async function createDevice() { if (!activeSpace) return; const name = window.prompt("设备名称"); if (!name) return; await runAction(async () => { const result = await request<{ device: { id: string }; token: string }>(`/api/v1/spaces/${activeSpace.id}/devices`, { method: "POST", body: JSON.stringify({ name }) }); setSecretCopied(false); setSecret({ label: `${name} 的 Agent 配置（设备令牌仅显示一次）`, value: `SINTHMUX_AGENT_DEVICE_ID=${result.device.id}\nSINTHMUX_AGENT_DEVICE_TOKEN=${result.token}\nSINTHMUX_AGENT_HUB_URL=ws://127.0.0.1:8090/ws/v1/agents/connect` }); }); }
+  async function createDevice() { if (!activeSpace) return; const name = window.prompt("设备名称"); if (!name) return; await runAction(async () => { const result = await request<{ device: { id: string }; token: string }>(`/api/v1/spaces/${activeSpace.id}/devices`, { method: "POST", body: JSON.stringify({ name }) }); setSecretCopied(false); setSecret({ label: `${name} 的设备代理配置（设备令牌仅显示一次）`, value: `SINTHMUX_CONNECTOR_DEVICE_ID=${result.device.id}\nSINTHMUX_CONNECTOR_DEVICE_TOKEN=${result.token}\nSINTHMUX_CONNECTOR_HUB_URL=ws://127.0.0.1:8090/ws/v1/connectors/connect` }); }); }
   async function addMember() { if (!activeSpace) return; const name = window.prompt("成员名称"); if (!name) return; const role = window.prompt("角色：admin、operator 或 viewer", "operator")?.toLowerCase(); if (!role) return; await runAction(async () => { const result = await request<{ token: string }>(`/api/v1/spaces/${activeSpace.id}/members`, { method: "POST", body: JSON.stringify({ name, role }) }); setSecretCopied(false); setSecret({ label: `${name} 的初始登录令牌（仅显示一次）`, value: result.token }); }); }
   async function addGithubMember() { if (!activeSpace) return; const githubId = Number(window.prompt("对方的 GitHub 数字 ID（需先登录 SinthMux）")); if (!Number.isSafeInteger(githubId) || githubId <= 0) return; const role = window.prompt("角色：admin、operator 或 viewer", "operator")?.toLowerCase(); if (!role) return; await runAction(async () => { await request(`/api/v1/spaces/${activeSpace.id}/members`, { method: "POST", body: JSON.stringify({ githubId, role }) }); }); }
   async function changeRole(member: Member) { if (!activeSpace) return; const role = window.prompt(`设置 ${member.name} 的角色：admin、operator 或 viewer`, member.role)?.toLowerCase(); if (!role || role === member.role) return; await runAction(async () => { await request(`/api/v1/spaces/${activeSpace.id}/members/${member.userId}`, { method: "PATCH", body: JSON.stringify({ role }) }); }); }
   async function removeMember(member: Member) { if (!activeSpace || !window.confirm(`移除成员 ${member.name}？`)) return; await runAction(async () => { await request(`/api/v1/spaces/${activeSpace.id}/members/${member.userId}`, { method: "DELETE" }); }); }
   async function revokeToken(token: LoginToken) { if (!window.confirm(`撤销登录令牌“${token.name}”？`)) return; await runAction(async () => { await request(`/api/v1/auth/tokens/${token.id}`, { method: "DELETE" }); }); }
-  async function revokeDevice(device: Device) { if (!activeSpace || !window.confirm(`移除设备“${device.name}”？Agent 将立即断开。`)) return; await runAction(async () => { await request(`/api/v1/spaces/${activeSpace.id}/devices/${device.id}`, { method: "DELETE" }); }); }
+  async function revokeDevice(device: Device) { if (!activeSpace || !window.confirm(`移除设备“${device.name}”？设备代理将立即断开。`)) return; await runAction(async () => { await request(`/api/v1/spaces/${activeSpace.id}/devices/${device.id}`, { method: "DELETE" }); }); }
   async function logout() { await runAction(async () => { await request("/api/v1/auth/logout", { method: "POST" }); setCSRF(""); setSecret(null); setActiveTerminal(null); }); }
 
   if (formal && me.isError) return <Login githubEnabled={status.data?.githubLoginEnabled ?? false} theme={theme} onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")} onLogin={() => { void me.refetch(); }} />;
@@ -138,7 +138,7 @@ export default function App() {
       {secret && <div className="secret-panel"><strong>{secret.label}</strong><pre>{secret.value}</pre><button type="button" onClick={() => { void navigator.clipboard.writeText(secret.value).then(() => setSecretCopied(true)).catch(() => setNotice("复制失败，请手动选中配置复制。")); }}>{secretCopied ? "已复制" : "复制配置"}</button><button type="button" onClick={() => setSecret(null)}>关闭</button></div>}
       {notice && <div className="notice error">{notice}</div>}
       {devices.isError && <div className="notice error">无法读取设备列表，请确认 Hub 已启动。</div>}
-      <section className="device-list" aria-label="设备列表">{items.length ? items.map((device) => <DeviceCard key={device.id} device={device} role={formal ? activeSpace?.role : undefined} onRevoke={formal && (activeSpace?.role === "owner" || activeSpace?.role === "admin") ? () => { void revokeDevice(device); } : undefined} expanded={selectedDevice === device.id} onToggle={() => setSelectedDevice(selectedDevice === device.id ? null : device.id)} onOpen={(session) => setActiveTerminal({ deviceId: device.id, deviceName: device.name, session })} />) : !devices.isError && <div className="empty-state"><Server /><strong>{devices.isPending ? "正在加载设备" : "还没有设备"}</strong><span>{devices.isPending ? "" : "添加设备并运行 Agent 后，设备会出现在这里。"}</span></div>}</section>
+      <section className="device-list" aria-label="设备列表">{items.length ? items.map((device) => <DeviceCard key={device.id} device={device} role={formal ? activeSpace?.role : undefined} onRevoke={formal && (activeSpace?.role === "owner" || activeSpace?.role === "admin") ? () => { void revokeDevice(device); } : undefined} expanded={selectedDevice === device.id} onToggle={() => setSelectedDevice(selectedDevice === device.id ? null : device.id)} onOpen={(session) => setActiveTerminal({ deviceId: device.id, deviceName: device.name, session })} />) : !devices.isError && <div className="empty-state"><Server /><strong>{devices.isPending ? "正在加载设备" : "还没有设备"}</strong><span>{devices.isPending ? "" : "添加设备并运行设备代理后，设备会出现在这里。"}</span></div>}</section>
       </>}
     </main>
   </div>;

@@ -73,23 +73,23 @@ func TestTerminalTicketBindsBrowserSession(t *testing.T) {
 }
 
 func TestStreamEventsAndDisconnect(t *testing.T) {
-	agent := &agentConnection{streams: make(map[string]chan protocol.Envelope), pending: make(map[string]chan rpcResult)}
+	connector := &connectorConnection{streams: make(map[string]chan protocol.Envelope), pending: make(map[string]chan rpcResult)}
 	first := make(chan protocol.Envelope, 2)
-	agent.streams["first"] = first
-	agent.streamEvent(protocol.Envelope{Type: protocol.MessageStreamData, StreamData: &protocol.StreamData{StreamID: "first", Data: []byte("hello")}})
+	connector.streams["first"] = first
+	connector.streamEvent(protocol.Envelope{Type: protocol.MessageStreamData, StreamData: &protocol.StreamData{StreamID: "first", Data: []byte("hello")}})
 	if got := <-first; string(got.StreamData.Data) != "hello" {
 		t.Fatalf("unexpected output: %+v", got)
 	}
-	agent.streamEvent(protocol.Envelope{Type: protocol.MessageStreamClose, StreamClose: &protocol.StreamClose{StreamID: "first", Reason: "done"}})
+	connector.streamEvent(protocol.Envelope{Type: protocol.MessageStreamClose, StreamClose: &protocol.StreamClose{StreamID: "first", Reason: "done"}})
 	if got := <-first; got.StreamClose == nil || got.StreamClose.Reason != "done" {
 		t.Fatalf("unexpected close: %+v", got)
 	}
-	if len(agent.streams) != 0 {
+	if len(connector.streams) != 0 {
 		t.Fatal("closed stream still registered")
 	}
 	second := make(chan protocol.Envelope, 1)
-	agent.streams["second"] = second
-	agent.failAll(ErrOffline)
+	connector.streams["second"] = second
+	connector.failAll(ErrOffline)
 	if got := <-second; got.StreamClose == nil || got.StreamClose.Reason != ErrOffline.Error() {
 		t.Fatalf("unexpected disconnect: %+v", got)
 	}

@@ -12,14 +12,14 @@ import (
 	"github.com/sinthmux/sinthmux/pkg/protocol"
 )
 
-type AgentHandler struct {
+type ConnectorHandler struct {
 	Registry           *devices.Registry
 	Manager            *Manager
 	DevToken           string
 	AuthenticateDevice func(context.Context, string, string) bool
 }
 
-func (h AgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h ConnectorHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	authorizedID := ""
 	if h.AuthenticateDevice != nil {
 		authorizedID = r.Header.Get("X-Sinthmux-Device-ID")
@@ -41,9 +41,9 @@ func (h AgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	var deviceID string
-	var agent *agentConnection
+	var connector *connectorConnection
 	defer func() {
-		if agent != nil && h.Manager.Unregister(deviceID, agent) {
+		if connector != nil && h.Manager.Unregister(deviceID, connector) {
 			h.Registry.Disconnect(deviceID)
 		}
 	}()
@@ -64,31 +64,31 @@ func (h AgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		switch envelope.Type {
-		case protocol.MessageAgentHello:
-			if agent != nil || envelope.Version != protocol.Version || envelope.Hello == nil || envelope.Hello.DeviceID == "" || (authorizedID != "" && envelope.Hello.DeviceID != authorizedID) {
+		case protocol.MessageConnectorHello:
+			if connector != nil || envelope.Version != protocol.Version || envelope.Hello == nil || envelope.Hello.DeviceID == "" || (authorizedID != "" && envelope.Hello.DeviceID != authorizedID) {
 				_ = writeEnvelope(ctx, connection, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageError, Error: &protocol.Error{Code: "invalid_hello", Message: "deviceId is required"}})
 				return
 			}
 			deviceID = envelope.Hello.DeviceID
-			agent = h.Manager.Register(deviceID, connection)
+			connector = h.Manager.Register(deviceID, connection)
 			h.Registry.Connect(*envelope.Hello)
-			_ = agent.send(ctx, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageAck, Ack: &protocol.Ack{Message: "agent registered"}})
+			_ = connector.send(ctx, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageAck, Ack: &protocol.Ack{Message: "connector registered"}})
 		case protocol.MessageHeartbeat:
-			if agent != nil && envelope.Heartbeat != nil && envelope.Heartbeat.DeviceID == deviceID {
+			if connector != nil && envelope.Heartbeat != nil && envelope.Heartbeat.DeviceID == deviceID {
 				h.Registry.Touch(deviceID)
 			}
 		case protocol.MessageRPCResponse:
-			if agent == nil || envelope.RequestID == "" {
+			if connector == nil || envelope.RequestID == "" {
 				continue
 			}
 			if envelope.Version != protocol.Version || envelope.Response == nil || (envelope.Response.OK && envelope.Response.Error != "") || (!envelope.Response.OK && envelope.Response.Error == "") {
-				agent.finish(envelope.RequestID, rpcResult{err: ErrInvalidResponse})
+				connector.finish(envelope.RequestID, rpcResult{err: ErrInvalidResponse})
 				continue
 			}
-			agent.finish(envelope.RequestID, rpcResult{response: envelope.Response})
+			connector.finish(envelope.RequestID, rpcResult{response: envelope.Response})
 		case protocol.MessageStreamData, protocol.MessageStreamClose:
-			if agent != nil && envelope.Version == protocol.Version {
-				agent.streamEvent(envelope)
+			if connector != nil && envelope.Version == protocol.Version {
+				connector.streamEvent(envelope)
 			}
 		default:
 			_ = writeEnvelope(ctx, connection, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageError, Error: &protocol.Error{Code: "unsupported_message", Message: string(envelope.Type)}})

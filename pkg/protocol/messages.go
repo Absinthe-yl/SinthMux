@@ -10,41 +10,41 @@ const Version uint32 = 1
 type MessageType string
 
 const (
-	MessageAgentHello   MessageType = "agent.hello"
-	MessageHeartbeat    MessageType = "agent.heartbeat"
-	MessageAck          MessageType = "hub.ack"
-	MessageError        MessageType = "hub.error"
-	MessageRPCRequest   MessageType = "rpc.request"
-	MessageRPCResponse  MessageType = "rpc.response"
-	MessageStreamOpen   MessageType = "stream.open"
-	MessageStreamData   MessageType = "stream.data"
-	MessageStreamResize MessageType = "stream.resize"
-	MessageStreamClose  MessageType = "stream.close"
+	MessageConnectorHello MessageType = "connector.hello"
+	MessageHeartbeat      MessageType = "connector.heartbeat"
+	MessageAck            MessageType = "hub.ack"
+	MessageError          MessageType = "hub.error"
+	MessageRPCRequest     MessageType = "rpc.request"
+	MessageRPCResponse    MessageType = "rpc.response"
+	MessageStreamOpen     MessageType = "stream.open"
+	MessageStreamData     MessageType = "stream.data"
+	MessageStreamResize   MessageType = "stream.resize"
+	MessageStreamClose    MessageType = "stream.close"
 )
 
 type Envelope struct {
-	Version      uint32        `json:"version"`
-	Type         MessageType   `json:"type"`
-	RequestID    string        `json:"requestId,omitempty"`
-	Hello        *AgentHello   `json:"hello,omitempty"`
-	Heartbeat    *Heartbeat    `json:"heartbeat,omitempty"`
-	Ack          *Ack          `json:"ack,omitempty"`
-	Error        *Error        `json:"error,omitempty"`
-	Request      *RPCRequest   `json:"request,omitempty"`
-	Response     *RPCResponse  `json:"response,omitempty"`
-	StreamOpen   *StreamOpen   `json:"streamOpen,omitempty"`
-	StreamData   *StreamData   `json:"streamData,omitempty"`
-	StreamResize *StreamResize `json:"streamResize,omitempty"`
-	StreamClose  *StreamClose  `json:"streamClose,omitempty"`
+	Version      uint32          `json:"version"`
+	Type         MessageType     `json:"type"`
+	RequestID    string          `json:"requestId,omitempty"`
+	Hello        *ConnectorHello `json:"hello,omitempty"`
+	Heartbeat    *Heartbeat      `json:"heartbeat,omitempty"`
+	Ack          *Ack            `json:"ack,omitempty"`
+	Error        *Error          `json:"error,omitempty"`
+	Request      *RPCRequest     `json:"request,omitempty"`
+	Response     *RPCResponse    `json:"response,omitempty"`
+	StreamOpen   *StreamOpen     `json:"streamOpen,omitempty"`
+	StreamData   *StreamData     `json:"streamData,omitempty"`
+	StreamResize *StreamResize   `json:"streamResize,omitempty"`
+	StreamClose  *StreamClose    `json:"streamClose,omitempty"`
 }
 
-type AgentHello struct {
-	DeviceID     string   `json:"deviceId"`
-	Name         string   `json:"name"`
-	Platform     string   `json:"platform"`
-	Architecture string   `json:"architecture"`
-	AgentVersion string   `json:"agentVersion"`
-	Capabilities []string `json:"capabilities"`
+type ConnectorHello struct {
+	DeviceID         string   `json:"deviceId"`
+	Name             string   `json:"name"`
+	Platform         string   `json:"platform"`
+	Architecture     string   `json:"architecture"`
+	ConnectorVersion string   `json:"connectorVersion"`
+	Capabilities     []string `json:"capabilities"`
 }
 
 type Heartbeat struct {

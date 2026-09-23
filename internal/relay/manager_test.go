@@ -14,10 +14,10 @@ import (
 	"github.com/sinthmux/sinthmux/pkg/protocol"
 )
 
-func connectedAgent(t *testing.T) (*Manager, *websocket.Conn) {
+func connectedConnector(t *testing.T) (*Manager, *websocket.Conn) {
 	t.Helper()
 	manager := NewManager()
-	server := httptest.NewServer(AgentHandler{Registry: devices.NewRegistry(), Manager: manager, DevToken: "test"})
+	server := httptest.NewServer(ConnectorHandler{Registry: devices.NewRegistry(), Manager: manager, DevToken: "test"})
 	t.Cleanup(server.Close)
 	ctx := context.Background()
 	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), &websocket.DialOptions{HTTPHeader: map[string][]string{"Authorization": {"Bearer test"}}})
@@ -25,7 +25,7 @@ func connectedAgent(t *testing.T) (*Manager, *websocket.Conn) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.CloseNow() })
-	if err := writeEnvelope(ctx, conn, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageAgentHello, Hello: &protocol.AgentHello{DeviceID: "device-1"}}); err != nil {
+	if err := writeEnvelope(ctx, conn, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageConnectorHello, Hello: &protocol.ConnectorHello{DeviceID: "device-1"}}); err != nil {
 		t.Fatal(err)
 	}
 	_, payload, err := conn.Read(ctx)
@@ -58,7 +58,7 @@ func readRequest(t *testing.T, conn *websocket.Conn) protocol.Envelope {
 }
 
 func TestRPCNormal(t *testing.T) {
-	manager, conn := connectedAgent(t)
+	manager, conn := connectedConnector(t)
 	result := make(chan *protocol.RPCResponse, 1)
 	go func() {
 		response, _ := manager.Call(context.Background(), "device-1", protocol.RPCRequest{Method: "tmux.sessions.list"})
@@ -88,7 +88,7 @@ func TestRPCOffline(t *testing.T) {
 }
 
 func TestRPCTimeout(t *testing.T) {
-	manager, conn := connectedAgent(t)
+	manager, conn := connectedConnector(t)
 	manager.Timeout = 50 * time.Millisecond
 	result := make(chan error, 1)
 	go func() {
@@ -102,7 +102,7 @@ func TestRPCTimeout(t *testing.T) {
 }
 
 func TestRPCInvalidResponse(t *testing.T) {
-	manager, conn := connectedAgent(t)
+	manager, conn := connectedConnector(t)
 	result := make(chan error, 1)
 	go func() {
 		_, err := manager.Call(context.Background(), "device-1", protocol.RPCRequest{Method: "tmux.sessions.list"})
@@ -118,7 +118,7 @@ func TestRPCInvalidResponse(t *testing.T) {
 }
 
 func TestRPCDuplicateRequestID(t *testing.T) {
-	manager, conn := connectedAgent(t)
+	manager, conn := connectedConnector(t)
 	result := make(chan error, 1)
 	go func() {
 		_, err := manager.callWithID(context.Background(), "device-1", "same-id", protocol.RPCRequest{Method: "tmux.sessions.list"})
