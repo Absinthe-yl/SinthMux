@@ -18,7 +18,19 @@ import (
 const version = "0.0.1-dev"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "pair" {
+		if err := pair(os.Args[2:]); err != nil {
+			_, _ = os.Stderr.WriteString("设备配对失败：" + err.Error() + "\n")
+			os.Exit(1)
+		}
+		return
+	}
 	settings := config.ConnectorFromEnv()
+	if settings.DeviceToken == "" {
+		if saved, err := loadPairedConfig(); err == nil {
+			settings = saved
+		}
+	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	backoff := time.Second
 

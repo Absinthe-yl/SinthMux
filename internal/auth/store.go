@@ -80,6 +80,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS login_tokens (id text PRIMARY KEY, user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE, name text NOT NULL, secret_hash bytea NOT NULL, expires_at timestamptz NOT NULL, revoked_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), last_used_at timestamptz)`,
 		`CREATE TABLE IF NOT EXISTS web_sessions (secret_hash bytea PRIMARY KEY, user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE, source_token_id text REFERENCES login_tokens(id), csrf text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), last_used_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL, revoked_at timestamptz)`,
 		`CREATE TABLE IF NOT EXISTS devices (id text PRIMARY KEY, space_id text NOT NULL REFERENCES spaces(id) ON DELETE CASCADE, name text NOT NULL, secret_hash bytea NOT NULL, revoked_at timestamptz, created_at timestamptz NOT NULL DEFAULT now())`,
+		`CREATE TABLE IF NOT EXISTS device_pairings (code_hash bytea PRIMARY KEY, space_id text NOT NULL REFERENCES spaces(id) ON DELETE CASCADE, name text NOT NULL, created_by text NOT NULL REFERENCES users(id), expires_at timestamptz NOT NULL, used_at timestamptz, created_at timestamptz NOT NULL DEFAULT now())`,
 		`CREATE TABLE IF NOT EXISTS audit_events (id bigserial PRIMARY KEY, actor_user_id text, space_id text, target text, action text NOT NULL, result text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`,
 	}
 	for _, query := range statements {
@@ -403,6 +404,59 @@ func (s *Store) NewDevice(ctx context.Context, spaceID, name string) (Device, st
 	}
 	_, err = s.DB.ExecContext(ctx, `INSERT INTO devices(id,space_id,name,secret_hash) VALUES($1,$2,$3,$4)`, id, spaceID, name, digest(secret))
 	return Device{ID: id, SpaceID: spaceID, Name: name}, "smd_" + id + "_" + secret, err
+}
+
+// NewDevicePairing creates a short-lived, single-use capability. Only its hash is stored.
+func (s *Store) NewDevicePairing(ctx context.Context, spaceID, userID, name string) (string, time.Time, error) {
+	secret, err := Random()
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	code := "smp_" + secret
+	expires := time.Now().Add(5 * time.Minute)
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO device_pairings(code_hash,space_id,name,created_by,expires_at) VALUES($1,$2,$3,$4,$5)`, digest(code), spaceID, name, userID, expires)
+	return code, expires, err
+}
+
+// RedeemDevicePairing atomically consumes a pairing code and creates its device.
+func (s *Store) RedeemDevicePairing(ctx context.Context, code string) (Device, string, error) {
+	if len(code) != 68 || !strings.HasPrefix(code, "smp_") {
+		return Device{}, "", ErrDenied
+	}
+	if _, err := hex.DecodeString(code[4:]); err != nil {
+		return Device{}, "", ErrDenied
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Device{}, "", err
+	}
+	defer tx.Rollback()
+	var device Device
+	err = tx.QueryRowContext(ctx, `SELECT p.space_id,p.name FROM device_pairings p JOIN users u ON u.id=p.created_by JOIN memberships m ON m.user_id=p.created_by AND m.space_id=p.space_id WHERE p.code_hash=$1 AND p.used_at IS NULL AND p.expires_at>now() AND u.status='active' AND m.role IN ('owner','admin') FOR UPDATE OF p`, digest(code)).Scan(&device.SpaceID, &device.Name)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Device{}, "", ErrDenied
+		}
+		return Device{}, "", err
+	}
+	device.ID, err = ID()
+	if err != nil {
+		return Device{}, "", err
+	}
+	secret, err := Random()
+	if err != nil {
+		return Device{}, "", err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO devices(id,space_id,name,secret_hash) VALUES($1,$2,$3,$4)`, device.ID, device.SpaceID, device.Name, digest(secret)); err != nil {
+		return Device{}, "", err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE device_pairings SET used_at=now() WHERE code_hash=$1`, digest(code)); err != nil {
+		return Device{}, "", err
+	}
+	if err = tx.Commit(); err != nil {
+		return Device{}, "", err
+	}
+	return device, "smd_" + device.ID + "_" + secret, nil
 }
 
 func (s *Store) AuthenticateDevice(ctx context.Context, deviceID, token string) bool {

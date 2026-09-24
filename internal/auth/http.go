@@ -139,6 +139,7 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/api/v1/auth/github/callback", s.githubCallback)
 	r.Get("/api/v1/auth/github/broker/callback", s.brokerCallback)
 	r.Post("/api/v1/auth/token", s.tokenLogin)
+	r.Post("/api/v1/connectors/pair", s.redeemDevicePairing)
 	r.Group(func(r chi.Router) {
 		r.Use(s.Require)
 		r.Get("/api/v1/auth/me", s.me)
@@ -153,6 +154,7 @@ func (s *Server) Mount(r chi.Router) {
 		r.Patch("/api/v1/spaces/{spaceId}/members/{userId}", s.changeMember)
 		r.Delete("/api/v1/spaces/{spaceId}/members/{userId}", s.removeMember)
 		r.Post("/api/v1/spaces/{spaceId}/devices", s.createDevice)
+		r.Post("/api/v1/spaces/{spaceId}/device-pairings", s.createDevicePairing)
 		r.Delete("/api/v1/spaces/{spaceId}/devices/{deviceId}", s.revokeDevice)
 		r.Get("/api/v1/spaces/{spaceId}/audit", s.auditEvents)
 	})
@@ -508,6 +510,80 @@ func (s *Server) createDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Store.Audit(r.Context(), session.User.ID, spaceID, device.ID, "device.create", "ok")
 	respond(w, 201, map[string]any{"device": device, "token": token})
+}
+
+func (s *Server) createDevicePairing(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if !readBody(w, r, &body) {
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	if len(body.Name) < 1 || len(body.Name) > 80 {
+		respond(w, 400, map[string]string{"error": "invalid name"})
+		return
+	}
+	session, _ := FromContext(r.Context())
+	spaceID := chi.URLParam(r, "spaceId")
+	role, err := s.Store.Role(r.Context(), session.User.ID, spaceID)
+	if err != nil {
+		respond(w, 404, map[string]string{"error": "space not found"})
+		return
+	}
+	if !Allowed(role, "device") {
+		respond(w, 403, map[string]string{"error": "permission denied"})
+		return
+	}
+	if !s.rateLimit("pair-issue:" + session.User.ID) {
+		respond(w, 429, map[string]string{"error": "too many pairing requests"})
+		return
+	}
+	code, expires, err := s.Store.NewDevicePairing(r.Context(), spaceID, session.User.ID, body.Name)
+	if err != nil {
+		respond(w, 500, map[string]string{"error": "database error"})
+		return
+	}
+	s.Store.Audit(r.Context(), session.User.ID, spaceID, body.Name, "device.pairing.create", "ok")
+	w.Header().Set("Cache-Control", "no-store")
+	respond(w, 201, map[string]any{"code": code, "expiresAt": expires, "hubUrl": strings.TrimRight(s.OAuth.PublicURL, "/")})
+}
+
+func (s *Server) redeemDevicePairing(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimit(r.RemoteAddr) {
+		respond(w, 429, map[string]string{"error": "too many attempts"})
+		return
+	}
+	var body struct {
+		Code string `json:"code"`
+	}
+	if !readBody(w, r, &body) {
+		return
+	}
+	device, token, err := s.Store.RedeemDevicePairing(r.Context(), body.Code)
+	if err != nil {
+		if errors.Is(err, ErrDenied) {
+			respond(w, 401, map[string]string{"error": "invalid or expired pairing code"})
+		} else {
+			respond(w, 500, map[string]string{"error": "database error"})
+		}
+		return
+	}
+	public, err := url.Parse(s.OAuth.PublicURL)
+	if err != nil {
+		respond(w, 500, map[string]string{"error": "invalid public URL"})
+		return
+	}
+	if public.Scheme == "https" {
+		public.Scheme = "wss"
+	} else {
+		public.Scheme = "ws"
+	}
+	public.Path = "/ws/v1/connectors/connect"
+	public.RawQuery = ""
+	s.Store.Audit(r.Context(), "", device.SpaceID, device.ID, "device.pairing.redeem", "ok")
+	w.Header().Set("Cache-Control", "no-store")
+	respond(w, 201, map[string]string{"deviceId": device.ID, "deviceToken": token, "hubUrl": public.String(), "name": device.Name})
 }
 
 func (s *Server) githubStart(w http.ResponseWriter, r *http.Request) {

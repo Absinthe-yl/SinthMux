@@ -1,5 +1,5 @@
 :80 {
-	@backend path /api/* /ws/* /health
+	@backend path /api/* /ws/* /health /install/* /downloads/*
 	handle @backend {
 		reverse_proxy hub:8080
 	}

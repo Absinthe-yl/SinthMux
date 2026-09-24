@@ -8,7 +8,9 @@ export default defineConfig({
     proxy: {
       "/api": "http://127.0.0.1:8090",
 	  "/ws": { target: "ws://127.0.0.1:8090", ws: true },
-      "/health": "http://127.0.0.1:8090"
+      "/health": "http://127.0.0.1:8090",
+      "/install": "http://127.0.0.1:8090",
+      "/downloads": "http://127.0.0.1:8090"
     }
   }
 });

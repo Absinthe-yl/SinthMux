@@ -41,7 +41,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .topbar-inner, .shell { width: min(980px, calc(100% - 40px)); margin: 0 auto; }
 .topbar-inner { min-height: 70px; display: flex; align-items: center; justify-content: space-between; }
 .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; }
-.brand-mark { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: var(--accent); color: var(--page); font-size: 17px; font-weight: 800; letter-spacing: -.1em; padding-right: 2px; }
+.brand-mark { width: 34px; height: 34px; display: block; flex: 0 0 auto; border-radius: 8px; object-fit: cover; }
 .brand strong { font-size: 16px; letter-spacing: -.04em; }
 .top-actions { display: flex; align-items: center; gap: 15px; }
 .hub-status { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
@@ -124,7 +124,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .login-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; position: relative; }
 .login-theme { position: absolute; top: 24px; right: 24px; }
 .login-card { width: min(400px, 100%); padding: 36px 30px 26px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); text-align: center; box-shadow: 0 18px 60px #0000000b; }
-.login-mark { width: 56px; height: 56px; display: grid; place-items: center; margin: 0 auto; border-radius: 15px; background: var(--accent); color: var(--page); font-size: 26px; font-weight: 800; letter-spacing: -.1em; padding-right: 4px; }
+.login-mark { width: 72px; height: 72px; display: block; margin: 0 auto; border-radius: 16px; object-fit: cover; }
 .login-card h1 { margin: 22px 0 6px; font-size: 29px; letter-spacing: -.05em; }
 .login-card p { margin: 0 0 34px; color: var(--muted); font-size: 13px; }
 .github-login { display: block; width: 100%; padding: 13px; border: 1px solid var(--accent); border-radius: 9px; background: var(--accent); color: var(--page); font-size: 14px; font-weight: 700; text-align: center; text-decoration: none; }

@@ -124,6 +124,27 @@ func TestFormalStoreIntegration(t *testing.T) {
 	if !s.AuthenticateDevice(ctx, device.ID, deviceToken) || s.AuthenticateDevice(ctx, device.ID, "smd_"+device.ID+"_wrong") {
 		t.Fatal("device credential validation failed")
 	}
+	pairing, expires, err := s.NewDevicePairing(ctx, spaceID, owner.ID, "paired-device")
+	if err != nil || time.Until(expires) <= 0 {
+		t.Fatalf("new pairing: %v", err)
+	}
+	paired, pairedToken, err := s.RedeemDevicePairing(ctx, pairing)
+	if err != nil || paired.Name != "paired-device" || !s.AuthenticateDevice(ctx, paired.ID, pairedToken) {
+		t.Fatalf("redeem pairing: %+v %v", paired, err)
+	}
+	if _, _, err := s.RedeemDevicePairing(ctx, pairing); err == nil {
+		t.Fatal("pairing code was accepted twice")
+	}
+	expired, _, err := s.NewDevicePairing(ctx, spaceID, owner.ID, "expired-device")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB.ExecContext(ctx, `UPDATE device_pairings SET expires_at=now()-interval '1 second' WHERE code_hash=$1`, digest(expired)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.RedeemDevicePairing(ctx, expired); err == nil {
+		t.Fatal("expired pairing code was accepted")
+	}
 	manager := relay.NewManager()
 	registry := devices.NewRegistry()
 	connectorHTTP := relay.ConnectorHandler{Registry: registry, Manager: manager, AuthenticateDevice: func(ctx context.Context, id, authorization string) bool {
@@ -193,6 +214,42 @@ func TestFormalStoreIntegration(t *testing.T) {
 		t.Fatal("viewer received terminal input permission")
 	}
 	authServer := NewServer(s, OAuthConfig{PublicURL: "http://127.0.0.1:5173"})
+	pairRouter := chi.NewRouter()
+	authServer.Mount(pairRouter)
+	issue := func(secret, csrf, name string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/spaces/"+spaceID+"/device-pairings", strings.NewReader(`{"name":"`+name+`"}`))
+		req.AddCookie(&http.Cookie{Name: cookieName, Value: secret})
+		req.Header.Set("X-Sinthmux-CSRF", csrf)
+		response := httptest.NewRecorder()
+		pairRouter.ServeHTTP(response, req)
+		return response
+	}
+	if got := issue(viewerSecret, viewerCSRF, "denied").Code; got != 403 {
+		t.Fatalf("viewer pairing status=%d", got)
+	}
+	ownerCSRF := session.CSRF
+	issued := issue(sessionSecret, ownerCSRF, "route-paired")
+	if issued.Code != 201 {
+		t.Fatalf("owner pairing status=%d body=%s", issued.Code, issued.Body.String())
+	}
+	var issueBody struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(issued.Body.Bytes(), &issueBody); err != nil {
+		t.Fatal(err)
+	}
+	redeemRequest := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/connectors/pair", strings.NewReader(`{"code":"`+issueBody.Code+`"}`))
+		response := httptest.NewRecorder()
+		pairRouter.ServeHTTP(response, req)
+		return response
+	}
+	if got := redeemRequest().Code; got != 201 {
+		t.Fatalf("pair route status=%d", got)
+	}
+	if got := redeemRequest().Code; got != 401 {
+		t.Fatalf("pair replay status=%d", got)
+	}
 	router := chi.NewRouter()
 	router.Group(func(r chi.Router) {
 		r.Use(authServer.Require)

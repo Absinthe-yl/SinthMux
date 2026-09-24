@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -21,6 +22,9 @@ import (
 )
 
 const version = "0.0.1-dev"
+
+//go:embed install-connector.sh
+var installConnectorScript []byte
 
 func main() {
 	settings := config.HubFromEnv()
@@ -51,7 +55,7 @@ func main() {
 			return
 		}
 		public, err := url.Parse(settings.PublicURL)
-		if err != nil || public.Host == "" || (public.Scheme != "https" && !(public.Scheme == "http" && (public.Hostname() == "localhost" || public.Hostname() == "127.0.0.1"))) {
+		if err != nil || public.Host == "" || public.User != nil || (public.Path != "" && public.Path != "/") || public.RawQuery != "" || public.Fragment != "" || (public.Scheme != "https" && !(public.Scheme == "http" && (public.Hostname() == "localhost" || public.Hostname() == "127.0.0.1"))) {
 			logger.Error("SINTHMUX_PUBLIC_URL must be HTTPS, except on localhost")
 			os.Exit(1)
 		}
@@ -76,6 +80,25 @@ func main() {
 	})
 	router.Get("/api/v1/system/status", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": version, "connectedDevices": len(registry.List()), "authMode": map[bool]string{true: "formal", false: "development"}[authServer != nil], "githubLoginEnabled": authServer != nil && authServer.GithubEnabled()})
+	})
+	router.Get("/install/connector.sh", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(installConnectorScript)
+	})
+	router.Get("/downloads/{file}", func(w http.ResponseWriter, r *http.Request) {
+		file := chi.URLParam(r, "file")
+		if file != "sinthmux-connector-darwin-amd64" && file != "sinthmux-connector-darwin-arm64" && file != "sinthmux-connector-linux-amd64" && file != "sinthmux-connector-linux-arm64" {
+			http.NotFound(w, r)
+			return
+		}
+		dir := os.Getenv("SINTHMUX_CONNECTOR_DOWNLOAD_DIR")
+		if dir == "" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		http.ServeFile(w, r, dir+"/"+file)
 	})
 	sessionAPI := sessionHandler{manager: manager}
 	terminalAPI := relay.NewTerminalHandler(manager)

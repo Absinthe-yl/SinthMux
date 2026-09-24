@@ -33,6 +33,8 @@ mkdir -p .run/bin .run/log
 printf '构建 Hub 和设备代理…\n'
 go build -o .run/bin/sinthmux-hub ./apps/hub
 go build -o .run/bin/sinthmux-connector ./apps/connector
+export SINTHMUX_CONNECTOR_DOWNLOAD_DIR="$root_dir/.run/bin"
+cp .run/bin/sinthmux-connector ".run/bin/sinthmux-connector-$(go env GOOS)-$(go env GOARCH)"
 if [[ ! -x apps/web/node_modules/.bin/vite ]]; then
   printf '安装 Web 依赖…\n'
   npm --prefix apps/web ci

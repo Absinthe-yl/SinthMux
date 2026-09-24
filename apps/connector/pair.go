@@ -1,0 +1,115 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/sinthmux/sinthmux/internal/config"
+)
+
+func pairedConfigPath() (string, error) {
+	if path := os.Getenv("SINTHMUX_CONNECTOR_CONFIG"); path != "" {
+		return path, nil
+	}
+	root, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "sinthmux", "connector.json"), nil
+}
+
+func loadPairedConfig() (config.Connector, error) {
+	path, err := pairedConfigPath()
+	if err != nil {
+		return config.Connector{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return config.Connector{}, err
+	}
+	var saved config.Connector
+	if err := json.Unmarshal(data, &saved); err != nil {
+		return config.Connector{}, err
+	}
+	if saved.DeviceID == "" || saved.DeviceToken == "" || saved.HubURL == "" {
+		return config.Connector{}, errors.New("设备配置不完整")
+	}
+	return saved, nil
+}
+
+func pair(args []string) error {
+	flags := flag.NewFlagSet("pair", flag.ContinueOnError)
+	hub := flags.String("hub", "", "Hub 的公开 HTTPS 地址")
+	code := flags.String("code", "", "网页生成的一次性配对码")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("不支持额外参数")
+	}
+	endpoint, err := url.Parse(*hub)
+	if err != nil || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || endpoint.Path != "" || (endpoint.Scheme != "https" && !(endpoint.Scheme == "http" && (endpoint.Hostname() == "localhost" || endpoint.Hostname() == "127.0.0.1"))) {
+		return errors.New("Hub 地址必须是 HTTPS；仅本机可用 HTTP")
+	}
+	path, err := pairedConfigPath()
+	if err != nil {
+		return err
+	}
+	if _, err = os.Stat(path); err == nil {
+		return fmt.Errorf("设备已有配置：%s；请先移走旧配置再配对", path)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	requestBody, _ := json.Marshal(map[string]string{"code": *code})
+	endpoint.Path = "/api/v1/connectors/pair"
+	request, err := http.NewRequest(http.MethodPost, endpoint.String(), bytes.NewReader(requestBody))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusCreated {
+		return fmt.Errorf("Hub 拒绝配对（HTTP %d），请重新生成配对命令", response.StatusCode)
+	}
+	var paired struct{ DeviceID, DeviceToken, HubURL, Name string }
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&paired); err != nil {
+		return err
+	}
+	if paired.DeviceID == "" || !strings.HasPrefix(paired.DeviceToken, "smd_"+paired.DeviceID+"_") || paired.HubURL == "" {
+		return errors.New("Hub 返回的设备配置无效")
+	}
+	saved := config.Connector{DeviceID: paired.DeviceID, DeviceToken: paired.DeviceToken, HubURL: paired.HubURL, Name: paired.Name}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	if err := json.NewEncoder(file).Encode(saved); err != nil {
+		file.Close()
+		os.Remove(path)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		os.Remove(path)
+		return err
+	}
+	fmt.Printf("设备 %s 已配对，配置保存在 %s\n", paired.Name, path)
+	return nil
+}
