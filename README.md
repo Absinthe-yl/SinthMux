@@ -74,9 +74,10 @@ make quickstart
 | 设备代理主动连接、心跳与重连 | 已实现 |
 | tmux 会话管理与浏览器终端 | 已实现 |
 | 令牌登录、GitHub 登录、空间和角色权限 | 已实现；GitHub 登录需配置 OAuth |
-| PostgreSQL 持久化与本机 Docker 启动 | 已实现；Docker 容器仍待实机验证 |
+| PostgreSQL 持久化与本机 Docker 启动 | 已实现并通过服务器实机验证 |
 | 一条命令安装设备代理、一次性设备配对 | 已实现；需目标机器安装 tmux、curl |
-| mTLS、公网 HTTPS 部署 | 待完成 |
+| 公网 HTTPS 部署 | 已验证；需自行配置 DNS、证书和反向代理 |
+| 设备代理 mTLS 认证 | 待完成 |
 
 目前 Hub 是受信任的控制面，项目不提供端到端加密。Docker Compose 将 Hub 和 Web 绑定在 `127.0.0.1`；其他电脑和手机无法直接访问当前默认部署。公网多主机使用仍需配置可访问的 HTTPS 入口；mTLS 尚未完成。
 
