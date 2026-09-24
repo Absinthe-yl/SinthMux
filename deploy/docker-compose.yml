@@ -17,6 +17,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/hub.Dockerfile
+      args:
+        GOPROXY: ${SINTHMUX_GO_PROXY:-https://proxy.golang.org,direct}
     environment:
       SINTHMUX_HUB_ADDR: :8080
       SINTHMUX_DATABASE_URL: postgres://sinthmux:${SINTHMUX_COMPOSE_DB_PASSWORD:?run scripts/docker-up.sh first}@postgres:5432/sinthmux?sslmode=disable
