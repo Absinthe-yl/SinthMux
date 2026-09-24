@@ -36,7 +36,7 @@ services:
       context: ..
       dockerfile: deploy/web.Dockerfile
     ports:
-      - "127.0.0.1:5173:80"
+      - "${SINTHMUX_WEB_BIND_ADDRESS:-127.0.0.1}:5173:80"
     depends_on:
       - hub
 
