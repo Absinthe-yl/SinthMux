@@ -10,6 +10,16 @@
 
 公网接入需能访问的 HTTPS 入口和正确的 `SINTHMUX_PUBLIC_URL`，详见 `README.md` 与 `docs/DEPLOYMENT_SINTHE_TOP.md`。部署记录描述某次环境状态，改部署前以当前 Compose、Caddyfile 和运行环境为准。Login Broker 使用独立的 `deploy/login-broker.compose.yml`。
 
+## 当前开发机的 GitHub 推送
+
+这台 Mac 的系统 SOCKS 代理当前为 `127.0.0.1:7897`。遇到直接连接的 DNS 故障或 HTTP 代理的 TLS 中断时，已验证下面的命令可推送；`socks5h` 让域名由代理端解析，本次配合 `HTTP/1.1` 设置后推送成功：
+
+```bash
+git -c http.proxy=socks5h://127.0.0.1:7897 -c http.version=HTTP/1.1 push origin main
+```
+
+代理端口可能变化，重用前先用 `scutil --proxy` 查看 `SOCKSProxy`、`SOCKSPort` 和 `SOCKSEnable`。此设置仅作用于单次 Git 命令，不修改仓库或全局 Git 配置。
+
 ## 验证矩阵
 
 | 变更范围 | 优先命令或证据 |
