@@ -51,6 +51,7 @@ func pair(args []string) error {
 	flags := flag.NewFlagSet("pair", flag.ContinueOnError)
 	hub := flags.String("hub", "", "Hub 的公开 HTTPS 地址")
 	code := flags.String("code", "", "网页生成的一次性配对码")
+	reuseExisting := flags.Bool("reuse-existing", false, "同一 Hub 已配对时保留现有设备身份")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -66,9 +67,31 @@ func pair(args []string) error {
 		return err
 	}
 	if _, err = os.Stat(path); err == nil {
-		return fmt.Errorf("设备已有配置：%s；请先移走旧配置再配对", path)
+		if !*reuseExisting {
+			return fmt.Errorf("设备已有配置：%s；请先移走旧配置再配对", path)
+		}
+		saved, loadErr := loadPairedConfig()
+		if loadErr != nil {
+			return fmt.Errorf("无法复用已有设备配置：%w", loadErr)
+		}
+		savedHub, parseErr := url.Parse(saved.HubURL)
+		expectedScheme := "wss"
+		if endpoint.Scheme == "http" {
+			expectedScheme = "ws"
+		}
+		if parseErr != nil || savedHub.Scheme != expectedScheme || !strings.EqualFold(savedHub.Host, endpoint.Host) || savedHub.Path != "/ws/v1/connectors/connect" {
+			return fmt.Errorf("设备已配对到其他 Hub；原配置保留在 %s", path)
+		}
+		fmt.Printf("设备 %s 已配对到此 Hub，保留原设备身份并更新设备代理\n", saved.Name)
+		if *code != "" {
+			fmt.Println("提示：这次输入的配对码不会使用；本机仍显示为原设备。")
+		}
+		return nil
 	} else if !os.IsNotExist(err) {
 		return err
+	}
+	if *code == "" {
+		return errors.New("首次接入需要网页生成的一次性配对码")
 	}
 	requestBody, _ := json.Marshal(map[string]string{"code": *code})
 	endpoint.Path = "/api/v1/connectors/pair"

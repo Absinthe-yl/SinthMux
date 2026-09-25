@@ -42,6 +42,16 @@ cat deploy/.bootstrap-token
 
 登录后，打开 **登录令牌** 创建自己的常用令牌。然后点击 **添加设备**，输入设备名称，在目标机器的终端执行网页生成的命令。该机器需要 macOS 或 Linux（x86-64 / ARM64）、`tmux` 和 `curl`；无需安装 Go，也无需克隆本仓库。设备上线后，展开 **会话** 列表即可进入终端。
 
+如果目标机器还没有 tmux，macOS 可运行 `brew install tmux`，Ubuntu/Debian 可运行 `sudo apt install tmux`。安装后重新执行接入命令即可。
+
+**更新或修复已接入的设备**：在该设备上重新执行原接入命令，会保留已有设备 ID 和令牌，不重复配对。原命令不在手边时，也可以将下面的地址替换为自己的 Hub 地址后运行：
+
+```bash
+curl -fsSL 'https://hub.example.com/install/connector.sh' | bash -s -- --hub 'https://hub.example.com' --repair
+```
+
+修复命令只适用于已经配对到同一 Hub 的设备。完成后回到网页确认设备在线；macOS 和普通后台模式的运行日志在 `~/.config/sinthmux/connector.log`，systemd 用户服务可通过 `journalctl --user -u sinthmux-connector` 查看。
+
 默认 Docker 配置只允许本机访问，因此首次体验请先把 **Hub 所在电脑**接入。要从另一台电脑接入设备或用手机访问，请将 Web 与 Hub 放在可访问的 HTTPS 地址下，并将 `SINTHMUX_PUBLIC_URL` 设置为该地址；设备代理通过出站连接接入，无需在设备上开放端口。
 
 ## 你可以这样使用

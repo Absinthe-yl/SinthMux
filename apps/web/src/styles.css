@@ -11,8 +11,8 @@
   --accent-soft: #e5f1e8;
   --danger: #b34247;
   --danger-soft: #fff1f0;
-  --terminal-bg: #f9fbf8;
-  --terminal-fg: #203029;
+  --terminal-bg: #111b16;
+  --terminal-fg: #e8f4eb;
   color-scheme: light;
 }
 :root[data-theme="dark"] {
@@ -100,6 +100,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .rename-form { flex-basis: 100%; margin: 0 0 10px 27px; }
 .rename-form input { max-width: 250px; }
 .session-note { margin: 8px 0 0; color: var(--muted); font-size: 11px; }
+.session-repair { margin-top: 10px; }
+.session-repair p { margin: 0 0 6px; }
+.session-repair pre { margin: 0 0 6px; padding: 8px; border-radius: 6px; background: var(--surface-alt); color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
 .empty-sessions { margin: 12px 0 2px; }
 .notice { margin-bottom: 10px; padding: 9px 11px; border-radius: 7px; font-size: 11px; }
 .notice.error { border: 1px solid var(--danger); background: var(--danger-soft); color: var(--danger); }

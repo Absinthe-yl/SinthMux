@@ -15,7 +15,7 @@ Web 位于 `apps/web/`，使用 React 19、TypeScript、Vite、React Query 和 x
 
 ## 页面数据流
 
-`App.tsx` 先读取 `/api/v1/system/status`，识别正式/开发模式。正式模式用 `/api/v1/auth/me` 取得用户、空间和 CSRF；设备列表按当前空间筛选。展开设备后 `SessionPanel` 查询会话，在线时定期刷新；操作成功后使 React Query 缓存失效。
+`App.tsx` 先读取 `/api/v1/system/status`，识别正式/开发模式。正式模式用 `/api/v1/auth/me` 取得用户、空间和 CSRF；设备列表按当前空间筛选。展开设备后 `SessionPanel` 查询会话，在线时定期刷新；操作成功后使 React Query 缓存失效。tmux 缺失或旧代理无法解析会话列表时，页面展示可复制的修复命令。
 
 打开会话时 `TerminalView` 先 POST 申请票据，再建立终端 WebSocket。输入以二进制发送，resize 以 JSON 文本发送；断线后重新申请票据并连接，不能重复使用旧票据。修改这段流程时对照 `internal/relay/terminal.go`。
 

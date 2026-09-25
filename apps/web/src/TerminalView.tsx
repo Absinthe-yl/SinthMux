@@ -20,7 +20,7 @@ export default function TerminalView({ deviceId, deviceName, session, theme, onB
     if (!host.current) return;
     const abort = new AbortController();
     const styles = getComputedStyle(document.documentElement);
-    const term = new XTerm({ cursorBlink: true, fontSize: 13, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", theme: {
+    const term = new XTerm({ cursorBlink: true, fontSize: 15, minimumContrastRatio: 9, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", theme: {
       background: styles.getPropertyValue("--terminal-bg").trim(),
       foreground: styles.getPropertyValue("--terminal-fg").trim(),
       cursor: styles.getPropertyValue("--terminal-fg").trim()

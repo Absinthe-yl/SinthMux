@@ -23,7 +23,7 @@ func TestPairSavesCredentialOnce(t *testing.T) {
 			t.Errorf("unexpected pairing body: %v %v", body, err)
 		}
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]string{"deviceId": "device1", "deviceToken": "smd_device1_secret", "hubUrl": "ws://127.0.0.1:8090/ws/v1/connectors/connect", "name": "My computer"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"deviceId": "device1", "deviceToken": "smd_device1_secret", "hubUrl": "ws://" + r.Host + "/ws/v1/connectors/connect", "name": "My computer"})
 	}))
 	defer server.Close()
 	args := []string{"--hub", server.URL, "--code", "smp_test"}
@@ -41,7 +41,25 @@ func TestPairSavesCredentialOnce(t *testing.T) {
 	if err := pair(args); err == nil {
 		t.Fatal("pair overwrote existing device config")
 	}
+	if err := pair([]string{"--hub", server.URL, "--reuse-existing"}); err != nil {
+		t.Fatalf("reinstall for the same Hub: %v", err)
+	}
+	if err := pair([]string{"--hub", server.URL, "--code", "expired_code", "--reuse-existing"}); err != nil {
+		t.Fatalf("rerun original command: %v", err)
+	}
+	other := httptest.NewServer(http.NotFoundHandler())
+	defer other.Close()
+	if err := pair([]string{"--hub", other.URL, "--reuse-existing"}); err == nil {
+		t.Fatal("reinstall accepted a different Hub")
+	}
 	if requests != 1 {
 		t.Fatalf("pair requests=%d, want 1", requests)
+	}
+}
+
+func TestPairRequiresCodeForFirstInstall(t *testing.T) {
+	t.Setenv("SINTHMUX_CONNECTOR_CONFIG", filepath.Join(t.TempDir(), "connector.json"))
+	if err := pair([]string{"--hub", "http://127.0.0.1:8090", "--reuse-existing"}); err == nil {
+		t.Fatal("first install without a pairing code succeeded")
 	}
 }

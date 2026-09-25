@@ -35,7 +35,7 @@ func (s *terminalStreams) open(request *protocol.StreamOpen) {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	command := exec.CommandContext(ctx, "tmux", "attach-session", "-t", "="+request.Session)
+	command := exec.CommandContext(ctx, tmuxExecutable(), "attach-session", "-t", "="+request.Session)
 	command.Env = append(os.Environ(), "TERM=xterm-256color")
 	file, err := pty.StartWithSize(command, &pty.Winsize{Cols: request.Cols, Rows: request.Rows})
 	if err != nil {

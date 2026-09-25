@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -78,18 +79,25 @@ func checkNames(names ...string) error {
 	return nil
 }
 
+func tmuxExecutable() string {
+	if path := os.Getenv("SINTHMUX_TMUX_BIN"); filepath.IsAbs(path) {
+		return path
+	}
+	return "tmux"
+}
+
 func runTmux(ctx context.Context, args ...string) (string, error) {
 	commandCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(commandCtx, "tmux", args...).CombinedOutput()
+	output, err := exec.CommandContext(commandCtx, tmuxExecutable(), args...).CombinedOutput()
 	if err == nil {
 		return string(output), nil
 	}
 	if commandCtx.Err() != nil {
 		return "", &tmuxError{code: "timeout", message: "tmux command timed out"}
 	}
-	if errors.Is(err, exec.ErrNotFound) {
-		return "", &tmuxError{code: "tmux_unavailable", message: "tmux is not installed on this device"}
+	if errors.Is(err, exec.ErrNotFound) || os.IsNotExist(err) {
+		return "", &tmuxError{code: "tmux_unavailable", message: "设备代理找不到 tmux；请在设备上安装 tmux 后重新运行接入命令"}
 	}
 	message := strings.TrimSpace(string(output))
 	lower := strings.ToLower(message)
@@ -104,7 +112,7 @@ func runTmux(ctx context.Context, args ...string) (string, error) {
 }
 
 func listSessions(ctx context.Context) ([]protocol.TmuxSession, error) {
-	output, err := runTmux(ctx, "list-sessions", "-F", "#{session_name}\t#{session_windows}\t#{session_attached}\t#{session_created}")
+	output, err := runTmux(ctx, "list-sessions", "-F", "#{session_name}|#{session_windows}|#{session_attached}|#{session_created}")
 	if err != nil {
 		var commandErr *tmuxError
 		if errors.As(err, &commandErr) && commandErr.code == "not_found" {
@@ -117,17 +125,18 @@ func listSessions(ctx context.Context) ([]protocol.TmuxSession, error) {
 		if line == "" {
 			continue
 		}
-		fields := strings.Split(line, "\t")
-		if len(fields) != 4 {
+		fields := strings.Split(line, "|")
+		if len(fields) < 4 {
 			return nil, &tmuxError{code: "invalid_output", message: "invalid tmux session output"}
 		}
-		windows, windowsErr := strconv.Atoi(fields[1])
-		attached, attachedErr := strconv.Atoi(fields[2])
-		createdAt, createdErr := strconv.ParseInt(fields[3], 10, 64)
+		name := strings.Join(fields[:len(fields)-3], "|")
+		windows, windowsErr := strconv.Atoi(fields[len(fields)-3])
+		attached, attachedErr := strconv.Atoi(fields[len(fields)-2])
+		createdAt, createdErr := strconv.ParseInt(fields[len(fields)-1], 10, 64)
 		if windowsErr != nil || attachedErr != nil || createdErr != nil {
 			return nil, &tmuxError{code: "invalid_output", message: "invalid tmux session output"}
 		}
-		sessions = append(sessions, protocol.TmuxSession{Name: fields[0], Windows: windows, Attached: attached > 0, CreatedAt: createdAt})
+		sessions = append(sessions, protocol.TmuxSession{Name: name, Windows: windows, Attached: attached > 0, CreatedAt: createdAt})
 	}
 	return sessions, nil
 }
