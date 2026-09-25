@@ -35,7 +35,8 @@ func (s *terminalStreams) open(request *protocol.StreamOpen) {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	command := exec.CommandContext(ctx, tmuxExecutable(), "attach-session", "-t", "="+request.Session)
+	// launchd may provide a non-UTF-8 locale; tmux must send Unicode to the web terminal.
+	command := exec.CommandContext(ctx, tmuxExecutable(), "-u", "attach-session", "-t", "="+request.Session)
 	command.Env = append(os.Environ(), "TERM=xterm-256color")
 	file, err := pty.StartWithSize(command, &pty.Winsize{Cols: request.Cols, Rows: request.Rows})
 	if err != nil {
