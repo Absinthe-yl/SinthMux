@@ -30,6 +30,9 @@ func TestTmuxSessionLifecycle(t *testing.T) {
 		}
 		return response
 	}
+	if response := call(protocol.RPCRequest{Method: "tmux.sessions.list"}); !response.OK || len(response.Sessions) != 0 {
+		t.Fatalf("list before tmux server starts: %+v", response)
+	}
 	if response := call(protocol.RPCRequest{Method: "tmux.sessions.create", Name: "sinthmux_test"}); !response.OK {
 		t.Fatalf("create: %+v", response)
 	}

@@ -96,7 +96,7 @@ func runTmux(ctx context.Context, args ...string) (string, error) {
 	switch {
 	case strings.Contains(lower, "duplicate session"):
 		return "", &tmuxError{code: "already_exists", message: "session already exists"}
-	case strings.Contains(lower, "can't find session"), strings.Contains(lower, "no such session"), strings.Contains(lower, "no server running"), strings.Contains(lower, "failed to connect to server"):
+	case strings.Contains(lower, "can't find session"), strings.Contains(lower, "no such session"), strings.Contains(lower, "no server running"), strings.Contains(lower, "failed to connect to server"), strings.Contains(lower, "error connecting to") && strings.Contains(lower, "no such file or directory"):
 		return "", &tmuxError{code: "not_found", message: "session not found"}
 	default:
 		return "", &tmuxError{code: "tmux_error", message: fmt.Sprintf("tmux command failed: %s", message)}
