@@ -52,7 +52,7 @@ function Login({ githubEnabled, theme, onToggleTheme, onLogin }: { githubEnabled
   return <main className="login-shell">
     <button className="login-theme icon-button" type="button" title={theme === "dark" ? "切换浅色模式" : "切换深色模式"} aria-label={theme === "dark" ? "切换浅色模式" : "切换深色模式"} onClick={onToggleTheme}>{theme === "dark" ? <Sun /> : <Moon />}</button>
     <section className="login-card">
-      <img className="login-mark" src="/sinthmux-mark.png?v=2" alt="" />
+      <img className="login-mark" src="/sinthmux-mark-transparent.png?v=3" alt="" />
       <h1>SinthMux</h1>
       <p>终端继续运行，回来接着用。</p>
       {githubEnabled
@@ -127,7 +127,7 @@ export default function App() {
 
   return <div className="app-frame">
     <header className="topbar"><div className="topbar-inner">
-      <a className="brand" href="#top" aria-label="SinthMux 首页"><img className="brand-mark" src="/sinthmux-mark.png?v=2" alt="" /><strong>SinthMux</strong></a>
+      <a className="brand" href="#top" aria-label="SinthMux 首页"><img className="brand-mark" src="/sinthmux-mark-transparent.png?v=3" alt="" /><strong>SinthMux</strong></a>
       <div className="top-actions">{me.data && <span className="user-name">{me.data.user.name}</span>}<span className="hub-status"><span className={`status-dot${hubOnline ? " online" : ""}`} />Hub {hubOnline ? "在线" : status.isError ? "离线" : "连接中"}</span><button className="icon-button" type="button" title={theme === "dark" ? "切换浅色模式" : "切换深色模式"} aria-label={theme === "dark" ? "切换浅色模式" : "切换深色模式"} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? <Sun /> : <Moon />}</button></div>
     </div></header>
 
