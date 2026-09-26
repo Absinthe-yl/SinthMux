@@ -153,6 +153,23 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .management-row { border-top: 1px solid var(--line); }
 .management-panel button, .device-revoke { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--muted); font-size: 11px; }
 .management-panel button:hover, .device-revoke:hover { border-color: var(--accent); color: var(--accent); }
+.action-dialog { width: min(440px, calc(100% - 32px)); max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); box-shadow: 0 24px 70px #0004; }
+.action-dialog::backdrop { background: #10171599; }
+.action-dialog form { padding: 24px; }
+.action-dialog h2 { margin: 0; font-size: 18px; letter-spacing: -.03em; }
+.dialog-description { margin: 10px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.dialog-fields { display: grid; gap: 16px; margin-top: 22px; }
+.dialog-field { display: grid; gap: 7px; color: var(--ink); font-size: 12px; font-weight: 600; }
+.dialog-field input, .dialog-field select { width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; outline: none; background: var(--surface-alt); color: var(--ink); font-size: 14px; font-weight: 400; }
+.dialog-field input:focus, .dialog-field select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.dialog-error { margin: 16px 0 0; color: var(--danger); font-size: 12px; line-height: 1.5; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 26px; }
+.dialog-actions button { min-height: 38px; padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: 650; }
+.dialog-cancel { border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.dialog-confirm { border: 1px solid var(--accent); background: var(--accent); color: var(--page); }
+.dialog-confirm.destructive { border-color: var(--danger); background: var(--danger); color: var(--surface); }
+.dialog-cancel:hover { border-color: var(--accent); }
+.dialog-confirm:hover { opacity: .88; }
 @media (max-width: 600px) {
   .topbar-inner, .shell { width: min(100% - 28px, 980px); }
   .shell { padding-top: 31px; }
@@ -169,4 +186,5 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   .terminal-toolbar { gap: 9px; padding: 9px 12px; }
   .terminal-heading span, .terminal-expand { display: none; }
   .terminal-surface { height: calc(100dvh - 125px); min-height: 300px; padding: 8px; }
+  .action-dialog form { padding: 20px; }
 }

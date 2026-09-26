@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 import { Pencil, Plus, Terminal, Trash2 } from "lucide-react";
+import ActionDialog from "./ActionDialog";
 import { request } from "./api";
 
 type TmuxSession = { name: string; windows: number; attached: boolean; createdAt: number };
@@ -17,6 +18,7 @@ export default function SessionPanel({ deviceId, online, canManage, canClose, ca
   const [renameName, setRenameName] = useState("");
   const [inputError, setInputError] = useState("");
   const [repairCopied, setRepairCopied] = useState(false);
+  const [closing, setClosing] = useState<string | null>(null);
   const base = `/api/v1/devices/${encodeURIComponent(deviceId)}/sessions`;
   const queryKey = ["sessions", deviceId];
   const sessions = useQuery({ queryKey, queryFn: () => request<{ sessions: TmuxSession[] }>(base), retry: false, refetchInterval: online ? 10000 : false });
@@ -34,6 +36,7 @@ export default function SessionPanel({ deviceId, online, canManage, canClose, ca
       setInputError("");
       if (item.kind === "create") { setNewName(""); setCreating(false); }
       if (item.kind === "rename") setRenaming(null);
+      if (item.kind === "close") setClosing(null);
       void queryClient.invalidateQueries({ queryKey });
     }
   });
@@ -54,10 +57,6 @@ export default function SessionPanel({ deviceId, online, canManage, canClose, ca
     setInputError("");
     action.mutate({ kind: "rename", name: renaming, newName: name });
   };
-  const close = (name: string) => {
-    if (window.confirm(`确定关闭会话“${name}”？会话中的程序也会结束。`)) action.mutate({ kind: "close", name });
-  };
-
   return <div className="sessions">
     <div className="sessions-header"><strong>会话 <span>{sessions.data?.sessions.length ?? "—"}</span></strong>{online && canManage && <button className="new-session-button" type="button" onClick={() => { setCreating(!creating); setInputError(""); action.reset(); }}><Plus />新建会话</button>}</div>
     {creating && <form className="session-form create-form" onSubmit={create}><label className="sr-only" htmlFor={`new-session-${deviceId}`}>新会话名称</label><input id={`new-session-${deviceId}`} autoFocus placeholder="会话名称" value={newName} onChange={(event) => setNewName(event.target.value)} maxLength={64} disabled={action.isPending} /><button type="submit" disabled={action.isPending}>创建</button><button type="button" className="subtle-button" onClick={() => setCreating(false)}>取消</button></form>}
@@ -67,8 +66,9 @@ export default function SessionPanel({ deviceId, online, canManage, canClose, ca
     {action.isError && <div className="notice error">操作失败：{action.error.message}</div>}
     {sessions.isPending ? <p className="session-note">正在读取会话…</p> : sessions.isError ? <div className="notice error">读取失败：{sessions.error.message} <button className="text-button" type="button" onClick={() => sessions.refetch()}>重试</button>{repairNeeded && <div className="session-repair"><p>请在这台设备上安装 tmux，然后在它的终端运行修复命令：</p><pre>{repairCommand}</pre><button className="text-button" type="button" onClick={() => { void navigator.clipboard.writeText(repairCommand).then(() => setRepairCopied(true)).catch(() => setRepairCopied(false)); }}>{repairCopied ? "已复制" : "复制修复命令"}</button></div>}</div> : sessions.data.sessions.length === 0 ? <p className="session-note empty-sessions">暂无会话</p> : <ul className="session-list">{sessions.data.sessions.map((session) => <li className="session-row" key={session.name}>
       <Terminal className="terminal-icon" aria-hidden="true" /><button className="session-open" type="button" disabled={!online || !canOpen} onClick={() => onOpen(session.name)}><span className="session-info"><strong>{session.name}</strong><span>{session.windows} 个窗口{session.attached ? " · 已连接" : ""}</span></span><span className="session-enter">{canOpen ? "进入" : "只读暂未开放"}</span></button>
-      {online && canManage && <div className="session-actions"><button type="button" title={`重命名 ${session.name}`} aria-label={`重命名 ${session.name}`} disabled={action.isPending} onClick={() => { setRenaming(session.name); setRenameName(session.name); setInputError(""); action.reset(); }}><Pencil /></button>{canClose && <button type="button" className="delete-button" title={`关闭 ${session.name}`} aria-label={`关闭 ${session.name}`} disabled={action.isPending} onClick={() => close(session.name)}><Trash2 /></button>}</div>}
+      {online && canManage && <div className="session-actions"><button type="button" title={`重命名 ${session.name}`} aria-label={`重命名 ${session.name}`} disabled={action.isPending} onClick={() => { setRenaming(session.name); setRenameName(session.name); setInputError(""); action.reset(); }}><Pencil /></button>{canClose && <button type="button" className="delete-button" title={`关闭 ${session.name}`} aria-label={`关闭 ${session.name}`} disabled={action.isPending} onClick={() => { action.reset(); setClosing(session.name); }}><Trash2 /></button>}</div>}
       {renaming === session.name && <form className="session-form rename-form" onSubmit={rename}><label className="sr-only" htmlFor={`rename-${deviceId}-${session.name}`}>新的会话名称</label><input id={`rename-${deviceId}-${session.name}`} autoFocus value={renameName} maxLength={64} onChange={(event) => setRenameName(event.target.value)} disabled={action.isPending} /><button type="submit" disabled={action.isPending}>保存</button><button type="button" className="subtle-button" onClick={() => setRenaming(null)}>取消</button></form>}
     </li>)}</ul>}
+    {closing && <ActionDialog title="关闭会话" description={`确定关闭“${closing}”？会话中的程序也会结束。`} confirmLabel="关闭会话" destructive busy={action.isPending} error={action.isError ? action.error.message : undefined} onClose={() => { setClosing(null); action.reset(); }} onSubmit={() => action.mutate({ kind: "close", name: closing })} />}
   </div>;
 }
