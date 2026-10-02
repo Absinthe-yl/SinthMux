@@ -94,10 +94,20 @@ func tmuxExecutable() string {
 	return "tmux"
 }
 
+// tmuxArgs selects the tmux server. SINTHMUX_TMUX_SOCKET (tmux -L) is set by
+// the installer when another tmux version already owns the default socket,
+// because tmux clients cannot talk to a server of a different protocol.
+func tmuxArgs(args ...string) []string {
+	if socket := os.Getenv("SINTHMUX_TMUX_SOCKET"); protocol.ValidSessionName(socket) {
+		return append([]string{"-L", socket}, args...)
+	}
+	return args
+}
+
 func runTmux(ctx context.Context, args ...string) (string, error) {
 	commandCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	command := exec.CommandContext(commandCtx, tmuxExecutable(), args...)
+	command := exec.CommandContext(commandCtx, tmuxExecutable(), tmuxArgs(args...)...)
 	hideConsole(command)
 	output, err := command.CombinedOutput()
 	if err == nil {

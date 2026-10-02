@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/UserExistsError/conpty"
@@ -43,7 +44,12 @@ func startAttach(ctx context.Context, session string, cols, rows uint16) (termin
 		return nil, errors.New("this Windows version has no ConPTY; Windows 10 1809 or newer is required")
 	}
 	home, _ := os.UserHomeDir()
-	command := windows.EscapeArg(tmuxExecutable()) + " attach-session -t " + windows.EscapeArg(sessionTarget(session))
+	parts := []string{tmuxExecutable()}
+	parts = append(parts, tmuxArgs("attach-session", "-t", sessionTarget(session))...)
+	for i, part := range parts {
+		parts[i] = windows.EscapeArg(part)
+	}
+	command := strings.Join(parts, " ")
 	env := append(os.Environ(), "TERM=xterm-256color")
 	cpty, err := conpty.Start(command, conpty.ConPtyDimensions(int(cols), int(rows)), conpty.ConPtyWorkDir(home), conpty.ConPtyEnv(env))
 	if err != nil {

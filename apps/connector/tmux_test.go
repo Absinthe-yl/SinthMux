@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sinthmux/sinthmux/pkg/protocol"
@@ -103,5 +104,20 @@ func TestInvalidSessionNames(t *testing.T) {
 		if response == nil || response.ErrorCode != "invalid_name" {
 			t.Fatalf("name %q: %+v", name, response)
 		}
+	}
+}
+
+func TestTmuxArgsUsesDedicatedSocket(t *testing.T) {
+	t.Setenv("SINTHMUX_TMUX_SOCKET", "")
+	if got := strings.Join(tmuxArgs("list-sessions"), " "); got != "list-sessions" {
+		t.Fatalf("default socket args = %q", got)
+	}
+	t.Setenv("SINTHMUX_TMUX_SOCKET", "sinthmux")
+	if got := strings.Join(tmuxArgs("list-sessions"), " "); got != "-L sinthmux list-sessions" {
+		t.Fatalf("dedicated socket args = %q", got)
+	}
+	t.Setenv("SINTHMUX_TMUX_SOCKET", "../evil socket")
+	if got := strings.Join(tmuxArgs("list-sessions"), " "); got != "list-sessions" {
+		t.Fatalf("unsafe socket name was used: %q", got)
 	}
 }

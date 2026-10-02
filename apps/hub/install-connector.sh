@@ -137,6 +137,22 @@ if [[ "$tmux_bin" != /* ]]; then
 fi
 tmux_dir="$(dirname "$tmux_bin")"
 
+# A tmux client cannot talk to a server of another protocol version. When some
+# other tmux already owns the default socket (or SinthMux used its own socket
+# before), use the dedicated server "tmux -L sinthmux".
+# (pipefail is on, so test captured output instead of piping tmux into grep.)
+tmux_socket=''
+default_server="$("$tmux_bin" list-sessions 2>&1 || true)"
+if "$tmux_bin" -L sinthmux list-sessions >/dev/null 2>&1; then
+  tmux_socket=sinthmux
+elif [[ "$default_server" == *"server exited unexpectedly"* || "$default_server" == *"protocol version mismatch"* ]]; then
+  tmux_socket=sinthmux
+  printf '本机已有其他版本的 tmux 在运行，SinthMux 改用独立的 tmux 服务。在本机接续会话请运行：%s -L sinthmux attach -t 会话名\n' "$tmux_bin"
+fi
+tmux_cmd() {
+  if [[ -n "$tmux_socket" ]]; then "$tmux_bin" -L "$tmux_socket" "$@"; else "$tmux_bin" "$@"; fi
+}
+
 tmp="$(mktemp "$install_dir/.sinthmux-connector.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
 hub_get "/downloads/sinthmux-connector-${platform}-${arch}" "$tmp"
@@ -144,9 +160,24 @@ chmod 700 "$tmp"
 "$tmp" pair --hub "$hub" --code "$code" --reuse-existing
 mv -f "$tmp" "$install_dir/sinthmux-connector"
 trap - EXIT
-if ! "$tmux_bin" list-sessions >/dev/null 2>&1; then
-  "$tmux_bin" new-session -d -s sinthmux -c "$HOME"
+if ! tmux_cmd list-sessions >/dev/null 2>&1; then
+  tmux_cmd new-session -d -s sinthmux -c "$HOME"
 fi
+
+# start_background runs the connector without a service manager, replacing a
+# previous background copy started the same way.
+start_background() {
+  mkdir -p "$HOME/.config/sinthmux"
+  local pid_file="$HOME/.config/sinthmux/connector.pid" old_pid=''
+  if [[ -f "$pid_file" ]]; then
+    read -r old_pid < "$pid_file" || true
+    if [[ "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" 2>/dev/null && [[ "$(ps -p "$old_pid" -o args=)" == "$install_dir/sinthmux-connector" ]]; then
+      kill "$old_pid"
+    fi
+  fi
+  SINTHMUX_TMUX_BIN="$tmux_bin" SINTHMUX_TMUX_SOCKET="$tmux_socket" PATH="$tmux_dir:$PATH" nohup "$install_dir/sinthmux-connector" >> "$HOME/.config/sinthmux/connector.log" 2>&1 < /dev/null &
+  printf '%s\n' "$!" > "$pid_file"
+}
 
 if [[ "$platform" == linux ]] && command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
   service_dir="$HOME/.config/systemd/user"
@@ -158,6 +189,7 @@ After=network-online.target
 [Service]
 ExecStart=%h/.local/bin/sinthmux-connector
 Environment="SINTHMUX_TMUX_BIN=$tmux_bin"
+Environment="SINTHMUX_TMUX_SOCKET=$tmux_socket"
 Environment="PATH=$tmux_dir:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 Restart=always
 RestartSec=5
@@ -189,6 +221,7 @@ elif [[ "$platform" == darwin ]]; then
 <key>EnvironmentVariables</key><dict>
 <key>PATH</key><string>$escaped_tmux_dir:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
 <key>SINTHMUX_TMUX_BIN</key><string>$escaped_tmux_bin</string>
+<key>SINTHMUX_TMUX_SOCKET</key><string>$tmux_socket</string>
 </dict>
 <key>StandardOutPath</key><string>$escaped_log_dir/connector.log</string>
 <key>StandardErrorPath</key><string>$escaped_log_dir/connector.log</string>
@@ -196,19 +229,13 @@ elif [[ "$platform" == darwin ]]; then
 </dict></plist>
 EOF
   launchctl bootout "gui/$(id -u)/com.sinthmux.connector" 2>/dev/null || true
-  launchctl bootstrap "gui/$(id -u)" "$plist"
-else
-  mkdir -p "$HOME/.config/sinthmux"
-  pid_file="$HOME/.config/sinthmux/connector.pid"
-  if [[ -f "$pid_file" ]]; then
-    old_pid=''
-    read -r old_pid < "$pid_file" || true
-    if [[ "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" 2>/dev/null && [[ "$(ps -p "$old_pid" -o args=)" == "$install_dir/sinthmux-connector" ]]; then
-      kill "$old_pid"
-    fi
+  if ! launchctl bootstrap "gui/$(id -u)" "$plist" 2>/dev/null; then
+    # e.g. SSH sessions or sandboxed shells cannot reach the GUI launchd domain.
+    printf '无法注册登录自启（launchctl 拒绝，常见于 SSH 或受限终端）；先以后台进程启动，在本机“终端”应用中重新运行这条命令即可启用自启。\n' >&2
+    start_background
   fi
-  SINTHMUX_TMUX_BIN="$tmux_bin" PATH="$tmux_dir:$PATH" nohup "$install_dir/sinthmux-connector" > "$HOME/.config/sinthmux/connector.log" 2>&1 < /dev/null &
-  printf '%s\n' "$!" > "$pid_file"
+else
+  start_background
   printf '已在后台启动；此系统未检测到用户服务管理器，重启后需再次启动 ~/.local/bin/sinthmux-connector。\n'
 fi
 printf '设备代理已启动。返回 SinthMux 网页确认设备在线；如果显示离线，请检查 ~/.config/sinthmux/connector.log（macOS/Linux 后台模式）或 journalctl --user -u sinthmux-connector（systemd）。\n'

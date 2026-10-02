@@ -23,7 +23,7 @@ func (t *unixTerminal) Wait() error { return t.command.Wait() }
 
 func startAttach(ctx context.Context, session string, cols, rows uint16) (terminalProcess, error) {
 	// launchd may provide a non-UTF-8 locale; tmux must send Unicode to the web terminal.
-	command := exec.CommandContext(ctx, tmuxExecutable(), "-u", "attach-session", "-t", "="+session)
+	command := exec.CommandContext(ctx, tmuxExecutable(), tmuxArgs("-u", "attach-session", "-t", "="+session)...)
 	command.Env = append(os.Environ(), "TERM=xterm-256color")
 	file, err := pty.StartWithSize(command, &pty.Winsize{Cols: cols, Rows: rows})
 	if err != nil {
