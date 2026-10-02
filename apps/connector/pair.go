@@ -89,36 +89,48 @@ func pair(args []string) error {
 		return err
 	}
 	replaceExisting := false
+	backupExisting := false
+	var existing config.Connector
 	if _, err = os.Stat(path); err == nil {
 		if !*reuseExisting {
 			return fmt.Errorf("设备已有配置：%s；请先移走旧配置再配对", path)
 		}
-		saved, loadErr := loadPairedConfig()
-		if loadErr != nil {
-			return fmt.Errorf("无法复用已有设备配置：%w", loadErr)
+		var loadErr error
+		existing, loadErr = loadPairedConfig()
+		switch {
+		case loadErr != nil:
+			if *code == "" {
+				return fmt.Errorf("无法复用已有设备配置：%w", loadErr)
+			}
+			fmt.Println("已有设备配置无法读取，将使用新配对码接入；旧配置会备份保留")
+			replaceExisting, backupExisting = true, true
+		case !sameHub(existing.HubURL, endpoint):
+			// A fresh one-time pairing code is an explicit request to move this
+			// machine to another Hub. Repair runs without a code never switch Hubs.
+			if *code == "" {
+				return fmt.Errorf("设备已配对到其他 Hub（%s）；如需改接到 %s，请在网页添加设备并运行生成的配对命令；原配置保留在 %s", existing.HubURL, *hub, path)
+			}
+			fmt.Printf("设备原先配对到 %s，正在改接到 %s；旧配置会备份保留\n", existing.HubURL, *hub)
+			replaceExisting, backupExisting = true, true
 		}
-		savedHub, parseErr := url.Parse(saved.HubURL)
-		expectedScheme := "wss"
-		if endpoint.Scheme == "http" {
-			expectedScheme = "ws"
-		}
-		if parseErr != nil || savedHub.Scheme != expectedScheme || !strings.EqualFold(savedHub.Host, endpoint.Host) || savedHub.Path != "/ws/v1/connectors/connect" {
-			return fmt.Errorf("设备已配对到其他 Hub；原配置保留在 %s", path)
-		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if fileExists(path) && !replaceExisting {
 		refreshCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		if changed, refreshErr := refreshCredential(refreshCtx, &saved); refreshErr == nil && changed {
-			if err := saveConfig(path, saved); err != nil {
+		if changed, refreshErr := refreshCredential(refreshCtx, &existing); refreshErr == nil && changed {
+			if err := saveConfig(path, existing); err != nil {
 				cancel()
 				return err
 			}
 		}
 		cancel()
-		valid, checkErr := existingCredentialValid(saved)
+		valid, checkErr := existingCredentialValid(existing)
 		if checkErr != nil {
 			return checkErr
 		}
 		if valid {
-			fmt.Printf("设备 %s 已配对到此 Hub，保留原设备身份并更新设备代理\n", saved.Name)
+			fmt.Printf("设备 %s 已配对到此 Hub，保留原设备身份并更新设备代理\n", existing.Name)
 			if *code != "" {
 				fmt.Println("提示：这次输入的配对码不会使用；本机仍显示为原设备。")
 			}
@@ -129,8 +141,6 @@ func pair(args []string) error {
 		}
 		fmt.Println("现有设备身份已失效，正在使用新配对码重新接入")
 		replaceExisting = true
-	} else if !os.IsNotExist(err) {
-		return err
 	}
 	if *code == "" {
 		return errors.New("首次接入需要网页生成的一次性配对码")
@@ -180,6 +190,13 @@ func pair(args []string) error {
 		return err
 	}
 	if replaceExisting {
+		if backupExisting {
+			backup := fmt.Sprintf("%s.bak-%s", path, time.Now().Format("20060102-150405"))
+			if err := os.Rename(path, backup); err != nil {
+				return fmt.Errorf("备份旧设备配置失败：%w", err)
+			}
+			fmt.Printf("旧设备配置已备份到 %s\n", backup)
+		}
 		if err := saveConfig(path, saved); err != nil {
 			return err
 		}
@@ -194,6 +211,21 @@ func pair(args []string) error {
 	}
 	fmt.Printf("设备 %s 已配对，配置保存在 %s\n", paired.Name, path)
 	return nil
+}
+
+// sameHub reports whether a saved connector URL points at the given Hub base URL.
+func sameHub(savedURL string, endpoint *url.URL) bool {
+	savedHub, err := url.Parse(savedURL)
+	expectedScheme := "wss"
+	if endpoint.Scheme == "http" {
+		expectedScheme = "ws"
+	}
+	return err == nil && savedHub.Scheme == expectedScheme && strings.EqualFold(savedHub.Host, endpoint.Host) && savedHub.Path == "/ws/v1/connectors/connect"
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // saveConfig replaces the device config atomically with owner-only permissions.

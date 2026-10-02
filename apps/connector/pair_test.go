@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/coder/websocket"
@@ -145,5 +146,53 @@ func TestPairRequiresCodeForFirstInstall(t *testing.T) {
 	t.Setenv("SINTHMUX_CONNECTOR_CONFIG", filepath.Join(t.TempDir(), "connector.json"))
 	if err := pair([]string{"--hub", "http://127.0.0.1:8090", "--reuse-existing"}); err == nil {
 		t.Fatal("first install without a pairing code succeeded")
+	}
+}
+
+func TestPairMovesToAnotherHubWithFreshCode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "connector.json")
+	t.Setenv("SINTHMUX_CONNECTOR_CONFIG", path)
+	old := []byte(`{"DeviceID":"old","DeviceToken":"smd_old_secret","HubURL":"ws://127.0.0.1:5173/ws/v1/connectors/connect","Name":"Old"}`)
+	if err := os.WriteFile(path, old, 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/connectors/pair" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			return
+		}
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["code"] != "fresh_code" {
+			http.Error(w, "expired", http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]string{"deviceId": "new", "deviceToken": "smd_new_secret", "hubUrl": "ws://" + r.Host + "/ws/v1/connectors/connect", "name": "New"})
+	}))
+	defer server.Close()
+	hub := "http://localhost:" + strings.TrimPrefix(server.Listener.Addr().String(), "127.0.0.1:")
+	if err := pair([]string{"--hub", hub, "--reuse-existing"}); err == nil {
+		t.Fatal("repair without a pairing code switched Hubs")
+	}
+	if err := pair([]string{"--hub", hub, "--code", "expired_code", "--reuse-existing"}); err == nil {
+		t.Fatal("rejected pairing code was accepted")
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != string(old) {
+		t.Fatalf("old config changed after rejected pairing: %s %v", data, err)
+	}
+	if err := pair([]string{"--hub", hub, "--code", "fresh_code", "--reuse-existing"}); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := loadPairedConfig()
+	if err != nil || saved.DeviceID != "new" || !strings.Contains(saved.HubURL, "localhost") {
+		t.Fatalf("moved config: %+v %v", saved, err)
+	}
+	backups, _ := filepath.Glob(path + ".bak-*")
+	if len(backups) != 1 {
+		t.Fatalf("backups=%v, want one", backups)
+	}
+	if data, err := os.ReadFile(backups[0]); err != nil || string(data) != string(old) {
+		t.Fatalf("backup content: %s %v", data, err)
 	}
 }
