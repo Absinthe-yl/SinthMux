@@ -1,0 +1,24 @@
+# Public deployment overlay: Caddy terminates HTTPS on 80/443 and obtains
+# certificates automatically. Use with deploy/docker-compose.yml:
+#   docker compose --env-file deploy/.env.local -f deploy/docker-compose.yml -f deploy/docker-compose.public.yml up -d --build
+services:
+  hub:
+    ports: !reset []
+  web:
+    ports: !override
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SINTHMUX_SITE: ${SINTHMUX_SITE:?set SINTHMUX_SITE in deploy/.env.local}
+      SINTHMUX_ACME_PROFILE: ${SINTHMUX_ACME_PROFILE:-classic}
+      # Certificate served when the client sends no SNI, e.g. https://<IP>/.
+      SINTHMUX_DEFAULT_SNI: ${SINTHMUX_DEFAULT_SNI:-${SINTHMUX_SITE}}
+    volumes:
+      - ./Caddyfile.public:/etc/caddy/Caddyfile:ro
+      - sinthmux-caddy-data:/data
+      - sinthmux-caddy-config:/config
+
+volumes:
+  sinthmux-caddy-data:
+  sinthmux-caddy-config:

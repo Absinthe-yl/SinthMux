@@ -123,6 +123,39 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .terminal-expand { display: grid; place-items: center; padding: 5px; border: 0; background: none; color: var(--muted); }
 .terminal-surface { height: min(72vh, 760px); min-height: 360px; padding: 14px; background: var(--terminal-bg); }
 .terminal-surface .xterm { height: 100%; }
+.terminal-tools { display: flex; align-items: center; gap: 2px; }
+.terminal-tools button { width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 7px; background: none; color: var(--muted); }
+.terminal-tools button:hover:not(:disabled) { border-color: var(--line); color: var(--ink); }
+.terminal-tools button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.terminal-tools button:disabled { opacity: .35; }
+.terminal-tools svg { width: 15px; height: 15px; }
+.terminal-page.with-keys .terminal-surface { height: min(62vh, 680px); }
+.terminal-keys { display: grid; gap: 6px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: var(--surface-alt); }
+.key-row { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.key-row::-webkit-scrollbar { display: none; }
+.key { min-width: 42px; height: 36px; flex: 0 0 auto; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); font: 600 13px ui-monospace, SFMono-Regular, Menlo, monospace; touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+.key:active { background: var(--accent-soft); }
+.key.shortcut { color: var(--accent); }
+.key.modifier.once { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.key.modifier.lock { border-color: var(--accent); background: var(--accent); color: var(--page); }
+.command-line { display: flex; gap: 6px; }
+.command-line input { min-width: 0; flex: 1; height: 38px; padding: 0 11px; border: 1px solid var(--line); border-radius: 8px; outline: none; background: var(--surface); color: var(--ink); font: 16px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.command-line input:focus { border-color: var(--accent); }
+.command-line button { width: 44px; height: 38px; display: grid; place-items: center; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: var(--page); }
+.command-line button svg { width: 17px; height: 17px; }
+@media (min-width: 601px) and (max-width: 1024px) {
+  .terminal-shell { width: calc(100% - 24px); padding-top: 12px; }
+  .terminal-surface { height: calc(100dvh - 190px); }
+  .terminal-page.with-keys .terminal-surface { height: calc(100dvh - 330px); min-height: 260px; }
+}
+/* Phones and touch tablets: the terminal fills the visible viewport, which
+   shrinks to sit above the on-screen keyboard (--terminal-viewport, set in JS). */
+@media (pointer: coarse), (max-width: 600px) {
+  .terminal-shell { width: 100%; padding: 0; }
+  .terminal-page { position: fixed; inset: 0 0 auto; z-index: 20; height: var(--terminal-viewport, 100dvh); display: flex; flex-direction: column; border: 0; border-radius: 0; }
+  .terminal-page .terminal-surface, .terminal-page.with-keys .terminal-surface { flex: 1; height: auto; min-height: 0; }
+  .terminal-toolbar { padding-top: max(9px, env(safe-area-inset-top)); }
+}
 .user-name { color: var(--ink); font-size: 12px; }
 .login-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; position: relative; }
 .login-theme { position: absolute; top: 24px; right: 24px; }
@@ -185,6 +218,12 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   .terminal-page { border-left: 0; border-right: 0; border-radius: 0; }
   .terminal-toolbar { gap: 9px; padding: 9px 12px; }
   .terminal-heading span, .terminal-expand { display: none; }
-  .terminal-surface { height: calc(100dvh - 125px); min-height: 300px; padding: 8px; }
+  .terminal-state { max-width: 34vw; overflow: hidden; text-overflow: ellipsis; }
+  .terminal-back { font-size: 0; gap: 0; }
+  .terminal-back svg { width: 18px; height: 18px; }
+  .terminal-tools { margin-left: auto; }
+  .terminal-surface { padding: 6px; }
+  .terminal-keys { padding: 6px 6px calc(6px + env(safe-area-inset-bottom)); gap: 5px; }
+  .key { min-width: 40px; height: 34px; padding: 0 8px; }
   .action-dialog form { padding: 20px; }
 }

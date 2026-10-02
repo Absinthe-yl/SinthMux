@@ -8,7 +8,8 @@ Web 位于 `apps/web/`，使用 React 19、TypeScript、Vite、React Query 和 x
 | --- | --- |
 | `src/App.tsx` | 登录页、主题、当前空间、设备列表、成员、令牌、配对命令和设备卡片 |
 | `src/SessionPanel.tsx` | 会话查询、创建、重命名、关闭、打开；按在线状态、能力和角色显示操作 |
-| `src/TerminalView.tsx` | xterm 实例、尺寸同步、票据申请、WebSocket 连接与退避重连 |
+| `src/TerminalView.tsx` | xterm 实例、尺寸同步、票据申请、WebSocket 连接与退避重连；字号调节、快捷键栏和命令输入框 |
+| `src/terminalKeys.ts` | 快捷键栏的按键序列：Ctrl/Alt 修饰（单次/锁定）、方向键与翻页的 xterm 转义序列 |
 | `src/api.ts` | 同源 `fetch`、Cookie、CSRF header 与 API 错误包装 |
 | `src/styles.css` | 页面和终端样式；主题变量 |
 | `vite.config.ts` | 开发期将 `/api`、`/ws`、安装与下载路径代理到本机 Hub |
@@ -18,6 +19,10 @@ Web 位于 `apps/web/`，使用 React 19、TypeScript、Vite、React Query 和 x
 `App.tsx` 先读取 `/api/v1/system/status`，识别正式/开发模式。正式模式用 `/api/v1/auth/me` 取得用户、空间和 CSRF；设备列表按当前空间筛选。展开设备后 `SessionPanel` 查询会话，在线时定期刷新；操作成功后使 React Query 缓存失效。tmux 缺失或旧代理无法解析会话列表时，页面展示可复制的修复命令。
 
 打开会话时 `TerminalView` 先 POST 申请票据，再建立终端 WebSocket。输入以二进制发送，resize 以 JSON 文本发送；断线后重新申请票据并连接，不能重复使用旧票据。修改这段流程时对照 `internal/relay/terminal.go`。
+
+## 手机与平板
+
+触屏设备或宽度不超过 600px 时，终端默认展开快捷键栏：Ctrl/Alt（点一次作用于下一个键，点两次锁定）、Esc、Tab、方向键、Home/End、翻页、常用 Ctrl 组合键、tmux 前缀和常用符号，以及一个可用输入法和粘贴的命令输入框（回车发送并执行）。按钮在 `pointerdown` 时阻止默认行为，避免抢走焦点导致手机键盘收起。手机上终端页固定铺满 `visualViewport`，软键盘弹出时高度随之缩小，快捷键栏贴在键盘上方。方向键会跟随终端的 DECCKM 模式发送 `ESC O` 或 `ESC [`，以兼容 vim、less 等程序。
 
 ## 开发定位
 

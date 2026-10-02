@@ -1,0 +1,28 @@
+# Public HTTPS entry. SINTHMUX_SITE is a domain list or a public IP; Let's
+# Encrypt issues IP certificates only with the six-day shortlived profile.
+{
+	# Clients send no SNI when visiting a bare IP; use the site's certificate.
+	default_sni {$SINTHMUX_DEFAULT_SNI}
+	cert_issuer acme {
+		profile {$SINTHMUX_ACME_PROFILE:classic}
+	}
+}
+
+{$SINTHMUX_SITE} {
+	encode zstd gzip
+	@backend path /api/* /ws/* /health /install/* /downloads/*
+	handle @backend {
+		reverse_proxy hub:8080
+	}
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+}

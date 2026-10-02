@@ -1,14 +1,65 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XTerm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { ArrowLeft, Maximize2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ArrowLeft, CornerDownLeft, Keyboard, Maximize2, Minus, Plus } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent, type PointerEvent } from "react";
 import { APIError, request } from "./api";
+import { consumeModifiers, keySequence, modifyText, nextModifier, noModifiers, type Modifiers, type SpecialKey } from "./terminalKeys";
+
+// Phones and tablets: touch input, or a narrow screen where a hardware keyboard is unlikely.
+const touchDevice = typeof matchMedia === "function" && matchMedia("(pointer: coarse), (max-width: 600px)").matches;
+const fontSizes = [11, 12, 13, 14, 15, 16, 18];
+const defaultFontSize = touchDevice ? 13 : 15;
+
+function savedFontSize() {
+  const value = Number(localStorage.getItem("sinthmux-terminal-font"));
+  return fontSizes.includes(value) ? value : defaultFontSize;
+}
+
+// Buttons in the key bar must not take focus, or the phone keyboard closes.
+const keepFocus = (event: PointerEvent) => event.preventDefault();
+
+const specialKeys: { label: string; key: SpecialKey; title: string }[] = [
+  { label: "Esc", key: "Escape", title: "Esc" },
+  { label: "Tab", key: "Tab", title: "Tab 补全" },
+  { label: "↑", key: "Up", title: "上一条命令" },
+  { label: "↓", key: "Down", title: "下一条命令" },
+  { label: "←", key: "Left", title: "左移" },
+  { label: "→", key: "Right", title: "右移" },
+  { label: "Home", key: "Home", title: "行首" },
+  { label: "End", key: "End", title: "行尾" },
+  { label: "PgUp", key: "PageUp", title: "上翻页" },
+  { label: "PgDn", key: "PageDown", title: "下翻页" }
+];
+
+const shortcuts: { label: string; data: string; title: string }[] = [
+  { label: "^C", data: "\x03", title: "Ctrl+C 中断" },
+  { label: "^D", data: "\x04", title: "Ctrl+D 退出" },
+  { label: "^Z", data: "\x1a", title: "Ctrl+Z 挂起" },
+  { label: "^L", data: "\x0c", title: "Ctrl+L 清屏" },
+  { label: "^R", data: "\x12", title: "Ctrl+R 搜索历史" },
+  { label: "^A", data: "\x01", title: "Ctrl+A 行首" },
+  { label: "^E", data: "\x05", title: "Ctrl+E 行尾" },
+  { label: "^U", data: "\x15", title: "Ctrl+U 删除到行首" },
+  { label: "tmux", data: "\x02", title: "tmux 前缀 Ctrl+B" }
+];
+
+const symbols = ["|", "~", "/", "-", "_", "*", "&", ";", ">", "$", "`"];
 
 export default function TerminalView({ deviceId, deviceName, session, theme, onBack }: { deviceId: string; deviceName: string; session: string; theme: "light" | "dark"; onBack: () => void }) {
   const host = useRef<HTMLDivElement>(null);
+  const page = useRef<HTMLElement>(null);
   const terminal = useRef<XTerm | null>(null);
+  const fitRef = useRef<() => void>(() => {});
+  const sendRef = useRef<(data: string) => void>(() => {});
+  const modsRef = useRef<Modifiers>(noModifiers);
   const [state, setState] = useState("连接中…");
+  const [showKeys, setShowKeys] = useState(touchDevice);
+  const [mods, setModsState] = useState<Modifiers>(noModifiers);
+  const [fontSize, setFontSize] = useState(savedFontSize);
+  const [command, setCommand] = useState("");
+
+  const setMods = (next: Modifiers) => { modsRef.current = next; setModsState(next); };
 
   useEffect(() => {
     if (!terminal.current) return;
@@ -17,10 +68,34 @@ export default function TerminalView({ deviceId, deviceName, session, theme, onB
   }, [theme]);
 
   useEffect(() => {
+    localStorage.setItem("sinthmux-terminal-font", String(fontSize));
+    if (!terminal.current) return;
+    terminal.current.options.fontSize = fontSize;
+    fitRef.current();
+  }, [fontSize]);
+
+  // The key bar changes the terminal height, so refit after it opens or closes.
+  useEffect(() => { fitRef.current(); }, [showKeys]);
+
+  // Keep the terminal above the on-screen keyboard (iOS does not resize the layout viewport).
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport || !touchDevice) return;
+    const update = () => {
+      page.current?.style.setProperty("--terminal-viewport", `${viewport.height}px`);
+      page.current?.style.setProperty("top", `${viewport.offsetTop}px`);
+    };
+    update();
+    viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
+    return () => { viewport.removeEventListener("resize", update); viewport.removeEventListener("scroll", update); };
+  }, []);
+
+  useEffect(() => {
     if (!host.current) return;
     const abort = new AbortController();
     const styles = getComputedStyle(document.documentElement);
-    const term = new XTerm({ cursorBlink: true, fontSize: 15, minimumContrastRatio: 9, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", theme: {
+    const term = new XTerm({ cursorBlink: true, fontSize: savedFontSize(), minimumContrastRatio: 9, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", theme: {
       background: styles.getPropertyValue("--terminal-bg").trim(),
       foreground: styles.getPropertyValue("--terminal-fg").trim(),
       cursor: styles.getPropertyValue("--terminal-fg").trim()
@@ -29,20 +104,33 @@ export default function TerminalView({ deviceId, deviceName, session, theme, onB
     term.loadAddon(fit);
     term.open(host.current);
     terminal.current = term;
+    const textarea = host.current.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+    textarea?.setAttribute("autocapitalize", "off");
+    textarea?.setAttribute("autocorrect", "off");
+    textarea?.setAttribute("spellcheck", "false");
     let socket: WebSocket | undefined;
     let disposed = false;
     let connecting = false;
     let connectedOnce = false;
     let retryCount = 0;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const send = (data: string) => {
+      if (socket?.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(data));
+    };
+    sendRef.current = send;
     const resize = () => {
       fit.fit();
       if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
     };
+    fitRef.current = resize;
     const observer = new ResizeObserver(resize);
     observer.observe(host.current);
     const onInput = term.onData((input) => {
-      if (socket?.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(input));
+      // Ctrl/Alt from the key bar apply to the next typed character.
+      const current = modsRef.current;
+      const output = modifyText(input, current);
+      if (output !== input) setMods(consumeModifiers(current));
+      send(output);
     });
     const scheduleRetry = () => {
       if (disposed || retryTimer) return;
@@ -71,7 +159,7 @@ export default function TerminalView({ deviceId, deviceName, session, theme, onB
           retryCount = 0;
           setState("已连接");
           resize();
-          term.focus();
+          if (!touchDevice) term.focus();
         };
         nextSocket.onmessage = (event: MessageEvent<ArrayBuffer>) => { if (socket === nextSocket && event.data instanceof ArrayBuffer) term.write(new Uint8Array(event.data)); };
         nextSocket.onclose = (event) => {
@@ -103,11 +191,52 @@ export default function TerminalView({ deviceId, deviceName, session, theme, onB
     };
     window.addEventListener("online", reconnectNow);
     void connect();
-    return () => { disposed = true; abort.abort(); if (retryTimer) clearTimeout(retryTimer); window.removeEventListener("online", reconnectNow); socket?.close(); observer.disconnect(); onInput.dispose(); terminal.current = null; term.dispose(); };
+    return () => { disposed = true; abort.abort(); if (retryTimer) clearTimeout(retryTimer); window.removeEventListener("online", reconnectNow); socket?.close(); observer.disconnect(); onInput.dispose(); sendRef.current = () => {}; fitRef.current = () => {}; terminal.current = null; term.dispose(); };
   }, [deviceId, session]);
 
-  return <section className="terminal-page" aria-label={`${session} 终端`}>
-    <div className="terminal-toolbar"><button className="terminal-back" type="button" onClick={onBack}><ArrowLeft />返回会话</button><div className="terminal-heading"><strong>{session}</strong><span>{deviceName}</span></div><span className="terminal-state">{state}</span><button className="terminal-expand" type="button" title="聚焦终端" aria-label="聚焦终端" onClick={() => host.current?.querySelector<HTMLElement>(".xterm-helper-textarea")?.focus()}><Maximize2 /></button></div>
+  const pressKey = (key: SpecialKey) => {
+    sendRef.current(keySequence(key, modsRef.current, terminal.current?.modes.applicationCursorKeysMode ?? false));
+    setMods(consumeModifiers(modsRef.current));
+  };
+  const pressText = (text: string) => {
+    sendRef.current(modifyText(text, modsRef.current));
+    setMods(consumeModifiers(modsRef.current));
+  };
+  const toggle = (name: keyof Modifiers) => setMods({ ...modsRef.current, [name]: nextModifier(modsRef.current[name]) });
+  const sendCommand = (event: FormEvent) => {
+    event.preventDefault();
+    sendRef.current(`${command}\r`);
+    setCommand("");
+  };
+  const modifierLabel = (name: keyof Modifiers) => mods[name] === "lock" ? "已锁定" : mods[name] === "once" ? "作用于下一个键" : "未启用";
+  const changeFont = (step: number) => setFontSize((size) => fontSizes[Math.min(fontSizes.length - 1, Math.max(0, fontSizes.indexOf(size) + step))]);
+
+  return <section className={`terminal-page${showKeys ? " with-keys" : ""}`} ref={page} aria-label={`${session} 终端`}>
+    <div className="terminal-toolbar">
+      <button className="terminal-back" type="button" onClick={onBack}><ArrowLeft />返回会话</button>
+      <div className="terminal-heading"><strong>{session}</strong><span>{deviceName}</span></div>
+      <span className="terminal-state">{state}</span>
+      <div className="terminal-tools">
+        <button type="button" title="缩小字号" aria-label="缩小字号" onClick={() => changeFont(-1)} disabled={fontSize === fontSizes[0]}><Minus /></button>
+        <button type="button" title="放大字号" aria-label="放大字号" onClick={() => changeFont(1)} disabled={fontSize === fontSizes[fontSizes.length - 1]}><Plus /></button>
+        <button type="button" title="快捷键栏" aria-label="快捷键栏" aria-pressed={showKeys} className={showKeys ? "active" : ""} onClick={() => setShowKeys((value) => !value)}><Keyboard /></button>
+        <button className="terminal-expand" type="button" title="聚焦终端" aria-label="聚焦终端" onClick={() => terminal.current?.focus()}><Maximize2 /></button>
+      </div>
+    </div>
     <div className="terminal-surface" ref={host} />
+    {showKeys && <div className="terminal-keys" role="toolbar" aria-label="终端快捷键">
+      <div className="key-row">
+        {(["ctrl", "alt"] as const).map((name) => <button key={name} type="button" className={`key modifier ${mods[name]}`} title={`${name === "ctrl" ? "Ctrl" : "Alt"}：点一次作用于下一个键，点两次锁定`} aria-label={`${name === "ctrl" ? "Ctrl" : "Alt"}，${modifierLabel(name)}`} onPointerDown={keepFocus} onClick={() => toggle(name)}>{name === "ctrl" ? "Ctrl" : "Alt"}</button>)}
+        {specialKeys.map((item) => <button key={item.key} type="button" className="key" title={item.title} aria-label={item.title} onPointerDown={keepFocus} onClick={() => pressKey(item.key)}>{item.label}</button>)}
+      </div>
+      <div className="key-row">
+        {shortcuts.map((item) => <button key={item.label} type="button" className="key shortcut" title={item.title} aria-label={item.title} onPointerDown={keepFocus} onClick={() => { sendRef.current(item.data); setMods(noModifiers); }}>{item.label}</button>)}
+        {symbols.map((symbol) => <button key={symbol} type="button" className="key" aria-label={`输入 ${symbol}`} onPointerDown={keepFocus} onClick={() => pressText(symbol)}>{symbol}</button>)}
+      </div>
+      <form className="command-line" onSubmit={sendCommand}>
+        <input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="输入命令，回车发送（可用输入法和粘贴）" aria-label="输入命令" autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false} enterKeyHint="send" />
+        <button type="submit" title="发送并回车" aria-label="发送并回车"><CornerDownLeft /></button>
+      </form>
+    </div>}
   </section>;
 }
