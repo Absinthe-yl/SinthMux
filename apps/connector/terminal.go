@@ -3,16 +3,22 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
+	"io"
 	"sync"
 
-	"github.com/creack/pty"
 	"github.com/sinthmux/sinthmux/pkg/protocol"
 )
 
+// terminalProcess is a tmux client attached to a pseudo terminal: a Unix PTY
+// on macOS/Linux, a ConPTY on Windows (see terminal_unix.go / terminal_windows.go).
+type terminalProcess interface {
+	io.ReadWriteCloser
+	Resize(cols, rows uint16) error
+	Wait() error
+}
+
 type terminalStream struct {
-	pty    *os.File
+	pty    terminalProcess
 	cancel context.CancelFunc
 }
 
@@ -35,10 +41,7 @@ func (s *terminalStreams) open(request *protocol.StreamOpen) {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	// launchd may provide a non-UTF-8 locale; tmux must send Unicode to the web terminal.
-	command := exec.CommandContext(ctx, tmuxExecutable(), "-u", "attach-session", "-t", "="+request.Session)
-	command.Env = append(os.Environ(), "TERM=xterm-256color")
-	file, err := pty.StartWithSize(command, &pty.Winsize{Cols: request.Cols, Rows: request.Rows})
+	file, err := startAttach(ctx, request.Session, request.Cols, request.Rows)
 	if err != nil {
 		cancel()
 		s.reportClose(request.StreamID, fmt.Sprintf("cannot open tmux session: %v", err))
@@ -50,7 +53,7 @@ func (s *terminalStreams) open(request *protocol.StreamOpen) {
 		s.mu.Unlock()
 		stream.cancel()
 		_ = file.Close()
-		_ = command.Wait()
+		_ = file.Wait()
 		return
 	}
 	s.active[request.StreamID] = stream
@@ -71,7 +74,7 @@ func (s *terminalStreams) open(request *protocol.StreamOpen) {
 				break
 			}
 		}
-		_ = command.Wait()
+		_ = file.Wait()
 		s.mu.Lock()
 		current := s.active[request.StreamID]
 		if current == stream {
@@ -110,7 +113,7 @@ func (s *terminalStreams) resize(size *protocol.StreamResize) {
 	stream := s.active[size.StreamID]
 	s.mu.Unlock()
 	if stream != nil {
-		_ = pty.Setsize(stream.pty, &pty.Winsize{Cols: size.Cols, Rows: size.Rows})
+		_ = stream.pty.Resize(size.Cols, size.Rows)
 	}
 }
 

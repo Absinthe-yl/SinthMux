@@ -14,7 +14,7 @@
 | `/ws/v1/terminal` | `internal/relay/terminal.go` | 浏览器终端中继 |
 | `/ws/v1/connectors/connect` | `internal/relay/connector_handler.go` | 设备代理长连接 |
 | `/api/v1/auth/*`、`/api/v1/spaces/*`、`/api/v1/connectors/pair` | `internal/auth/http.go` | 正式模式认证、成员、设备与配对 |
-| `/install/connector.sh`、`/downloads/{file}` | `apps/hub/main.go` | 安装脚本和受限文件名的代理二进制下载 |
+| `/install/connector.sh`、`/install/connector.ps1`、`/downloads/{file}` | `apps/hub/main.go`、`apps/hub/downloads.go` | macOS/Linux 与 Windows 安装脚本；按白名单提供设备代理（含 Windows `.exe`）、随附 tmux 和 `SHA256SUMS` |
 
 ## 会话请求如何流动
 

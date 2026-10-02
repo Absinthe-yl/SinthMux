@@ -79,9 +79,17 @@ func checkNames(names ...string) error {
 	return nil
 }
 
+// tmuxExecutable prefers an explicit SINTHMUX_TMUX_BIN, then a tmux that the
+// installer placed next to the connector (the Hub-provided bundle), then PATH.
 func tmuxExecutable() string {
 	if path := os.Getenv("SINTHMUX_TMUX_BIN"); filepath.IsAbs(path) {
 		return path
+	}
+	if self, err := os.Executable(); err == nil {
+		bundled := filepath.Join(filepath.Dir(self), bundledTmuxName)
+		if info, err := os.Stat(bundled); err == nil && !info.IsDir() {
+			return bundled
+		}
 	}
 	return "tmux"
 }
@@ -89,7 +97,9 @@ func tmuxExecutable() string {
 func runTmux(ctx context.Context, args ...string) (string, error) {
 	commandCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(commandCtx, tmuxExecutable(), args...).CombinedOutput()
+	command := exec.CommandContext(commandCtx, tmuxExecutable(), args...)
+	hideConsole(command)
+	output, err := command.CombinedOutput()
 	if err == nil {
 		return string(output), nil
 	}
@@ -122,6 +132,7 @@ func listSessions(ctx context.Context) ([]protocol.TmuxSession, error) {
 	}
 	sessions := make([]protocol.TmuxSession, 0)
 	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSuffix(line, "\r")
 		if line == "" {
 			continue
 		}
@@ -133,7 +144,7 @@ func listSessions(ctx context.Context) ([]protocol.TmuxSession, error) {
 		windows, windowsErr := strconv.Atoi(fields[len(fields)-3])
 		attached, attachedErr := strconv.Atoi(fields[len(fields)-2])
 		createdAt, createdErr := strconv.ParseInt(fields[len(fields)-1], 10, 64)
-		if windowsErr != nil || attachedErr != nil || createdErr != nil {
+		if (windowsErr != nil || attachedErr != nil || createdErr != nil) && !lenientSessionFields {
 			return nil, &tmuxError{code: "invalid_output", message: "invalid tmux session output"}
 		}
 		sessions = append(sessions, protocol.TmuxSession{Name: name, Windows: windows, Attached: attached > 0, CreatedAt: createdAt})
@@ -151,11 +162,11 @@ func createSession(ctx context.Context, name string) error {
 }
 
 func renameSession(ctx context.Context, name, newName string) error {
-	_, err := runTmux(ctx, "rename-session", "-t", "="+name, newName)
+	_, err := runTmux(ctx, "rename-session", "-t", sessionTarget(name), newName)
 	return err
 }
 
 func closeSession(ctx context.Context, name string) error {
-	_, err := runTmux(ctx, "kill-session", "-t", "="+name)
+	_, err := runTmux(ctx, "kill-session", "-t", sessionTarget(name))
 	return err
 }

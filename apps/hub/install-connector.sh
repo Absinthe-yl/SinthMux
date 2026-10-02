@@ -24,35 +24,128 @@ if [[ "$hub" != https://* && "$hub" != http://127.0.0.1:* && "$hub" != http://lo
   printf 'Hub 必须使用 HTTPS；HTTP 仅支持本机。\n' >&2
   exit 2
 fi
+case "$(uname -s)" in
+  Darwin) platform=darwin ;;
+  Linux) platform=linux ;;
+  MINGW*|MSYS*|CYGWIN*)
+    printf 'Windows 请在 SinthMux 网页的“添加设备”中选择 Windows，复制 PowerShell 命令，在 PowerShell 中运行。\n' >&2
+    exit 1 ;;
+  *) printf '仅支持 macOS、Linux 和 Windows 的 WSL。\n' >&2; exit 1 ;;
+esac
+case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; x86_64|amd64) arch=amd64 ;; *) printf '不支持此 CPU 架构。\n' >&2; exit 1 ;; esac
 if ! command -v curl >/dev/null 2>&1; then printf '请先安装 curl。\n' >&2; exit 1; fi
-if ! command -v tmux >/dev/null 2>&1; then
-  printf '请先安装 tmux 后重试：macOS 运行 brew install tmux；Ubuntu/Debian 运行 sudo apt install tmux。\n' >&2
-  exit 1
+
+hub_get() { # hub_get <path> <output>
+  if [[ "$hub" == https://* ]]; then
+    curl -fsSL --proto '=https' --proto-redir '=https' "${hub%/}$1" -o "$2"
+  else
+    curl -fsSL "${hub%/}$1" -o "$2"
+  fi
+}
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+
+install_dir="$HOME/.local/bin"
+mkdir -p "$install_dir"
+
+# tmux comes from, in order: (1) the system, (2) the Hub's bundle installed
+# next to the connector, (3) the system package manager.
+usable_tmux() { [[ -n "$1" && -x "$1" ]] && "$1" -V >/dev/null 2>&1; }
+
+# The Hub bundle is a self-contained tmux; SHA256SUMS guards against a
+# truncated download. Returns non-zero when the Hub has no bundle.
+install_bundled_tmux() {
+  local name="tmux-linux-$arch" target="$install_dir/tmux" tmp_tmux sums expected
+  [[ "$platform" == darwin ]] && name="tmux-darwin-universal"
+  tmp_tmux="$(mktemp "$install_dir/.tmux.XXXXXX")"
+  sums="$(mktemp)"
+  if ! hub_get "/downloads/$name" "$tmp_tmux" 2>/dev/null || ! hub_get "/downloads/SHA256SUMS" "$sums" 2>/dev/null; then
+    rm -f "$tmp_tmux" "$sums"; return 1
+  fi
+  expected="$(awk -v f="$name" '$2 == f || $2 == "*" f { print $1 }' "$sums")"
+  rm -f "$sums"
+  if [[ -z "$expected" || "$(sha256 "$tmp_tmux")" != "$expected" ]]; then
+    printf 'Hub 提供的 tmux 校验失败，改用系统包管理器。\n' >&2
+    rm -f "$tmp_tmux"; return 1
+  fi
+  chmod 755 "$tmp_tmux"
+  if [[ "$platform" == darwin ]]; then xattr -d com.apple.quarantine "$tmp_tmux" 2>/dev/null || true; fi
+  if ! usable_tmux "$tmp_tmux"; then rm -f "$tmp_tmux"; return 1; fi
+  mv -f "$tmp_tmux" "$target"
+}
+
+# Package managers must not read stdin: the script is usually piped into bash
+# and they would swallow the rest of it. sudo still prompts on the tty.
+as_root() {
+  if [[ "$(id -u)" == 0 ]]; then "$@" < /dev/null; else sudo "$@" < /dev/null; fi
+}
+
+install_packaged_tmux() {
+  if [[ "$platform" == darwin ]]; then
+    local brew='' candidate
+    for candidate in "$(command -v brew 2>/dev/null || true)" /opt/homebrew/bin/brew /usr/local/bin/brew; do
+      if [[ -n "$candidate" && -x "$candidate" ]]; then brew="$candidate"; break; fi
+    done
+    if [[ -n "$brew" ]]; then
+      printf '正在用 Homebrew 安装 tmux…\n'
+      HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1 "$brew" install tmux < /dev/null || return 1
+      PATH="$(dirname "$brew"):$PATH"; return 0
+    fi
+    if command -v port >/dev/null 2>&1; then
+      printf '正在用 MacPorts 安装 tmux（需要本机管理员密码）…\n'
+      as_root port -N install tmux; return
+    fi
+    printf '本机没有 Homebrew，无法自动安装 tmux。\n' >&2
+    return 1
+  fi
+  if [[ "$(id -u)" != 0 ]] && ! command -v sudo >/dev/null 2>&1; then
+    printf '当前用户无法使用 sudo，无法用包管理器安装 tmux。\n' >&2
+    return 1
+  fi
+  printf '正在用系统包管理器安装 tmux（可能需要输入本机管理员密码）…\n'
+  if command -v apt-get >/dev/null 2>&1; then
+    as_root env DEBIAN_FRONTEND=noninteractive apt-get update -qq && as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux
+  elif command -v dnf >/dev/null 2>&1; then as_root dnf install -y -q tmux
+  elif command -v yum >/dev/null 2>&1; then as_root yum install -y -q tmux
+  elif command -v zypper >/dev/null 2>&1; then as_root zypper --non-interactive install tmux
+  elif command -v pacman >/dev/null 2>&1; then as_root pacman -S --noconfirm --needed tmux
+  elif command -v apk >/dev/null 2>&1; then as_root apk add tmux
+  else printf '未识别本机的包管理器。\n' >&2; return 1
+  fi
+}
+
+tmux_bin="$(command -v tmux 2>/dev/null || true)"
+if usable_tmux "$tmux_bin"; then
+  :
+elif usable_tmux "$install_dir/tmux"; then
+  tmux_bin="$install_dir/tmux"
+else
+  printf '未检测到 tmux，正在从 Hub 获取…\n'
+  if install_bundled_tmux; then
+    tmux_bin="$install_dir/tmux"
+  elif install_packaged_tmux && tmux_bin="$(command -v tmux 2>/dev/null || true)" && usable_tmux "$tmux_bin"; then
+    :
+  else
+    printf 'tmux 安装未完成。请手动安装（macOS：brew install tmux；Ubuntu/Debian：sudo apt install tmux；Fedora：sudo dnf install tmux），再重新运行这条接入命令。\n' >&2
+    exit 1
+  fi
+  printf '已就绪：%s（%s）\n' "$("$tmux_bin" -V)" "$tmux_bin"
 fi
-tmux_bin="$(command -v tmux)"
 if [[ "$tmux_bin" != /* ]]; then
   tmux_bin="$(cd "$(dirname "$tmux_bin")" && pwd -P)/$(basename "$tmux_bin")"
 fi
 tmux_dir="$(dirname "$tmux_bin")"
 
-case "$(uname -s)" in Darwin) platform=darwin ;; Linux) platform=linux ;; *) printf '仅支持 macOS 和 Linux。\n' >&2; exit 1 ;; esac
-case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; x86_64|amd64) arch=amd64 ;; *) printf '不支持此 CPU 架构。\n' >&2; exit 1 ;; esac
-
-install_dir="$HOME/.local/bin"
-mkdir -p "$install_dir"
 tmp="$(mktemp "$install_dir/.sinthmux-connector.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
-if [[ "$hub" == https://* ]]; then
-  curl -fsSL --proto '=https' --proto-redir '=https' "${hub%/}/downloads/sinthmux-connector-${platform}-${arch}" -o "$tmp"
-else
-  curl -fsSL "${hub%/}/downloads/sinthmux-connector-${platform}-${arch}" -o "$tmp"
-fi
+hub_get "/downloads/sinthmux-connector-${platform}-${arch}" "$tmp"
 chmod 700 "$tmp"
 "$tmp" pair --hub "$hub" --code "$code" --reuse-existing
 mv -f "$tmp" "$install_dir/sinthmux-connector"
 trap - EXIT
-if ! tmux list-sessions >/dev/null 2>&1; then
-  tmux new-session -d -s sinthmux
+if ! "$tmux_bin" list-sessions >/dev/null 2>&1; then
+  "$tmux_bin" new-session -d -s sinthmux -c "$HOME"
 fi
 
 if [[ "$platform" == linux ]] && command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then

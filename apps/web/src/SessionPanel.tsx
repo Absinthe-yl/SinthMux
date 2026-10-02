@@ -3,6 +3,7 @@ import { FormEvent, useState } from "react";
 import { Pencil, Plus, Terminal, Trash2 } from "lucide-react";
 import ActionDialog from "./ActionDialog";
 import { request } from "./api";
+import { deviceInstallOS, installCommand } from "./installCommand";
 
 type TmuxSession = { name: string; windows: number; attached: boolean; createdAt: number };
 type Action = { kind: "create"; name: string } | { kind: "rename"; name: string; newName: string } | { kind: "close"; name: string };
@@ -10,7 +11,7 @@ type Action = { kind: "create"; name: string } | { kind: "rename"; name: string;
 const namePattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const nameHint = "名称只能使用字母、数字、下划线和连字符，且需以字母或数字开头（最多 64 字符）。";
 
-export default function SessionPanel({ deviceId, online, canManage, canClose, canOpen, onOpen }: { deviceId: string; online: boolean; canManage: boolean; canClose: boolean; canOpen: boolean; onOpen: (session: string) => void }) {
+export default function SessionPanel({ deviceId, platform, online, canManage, canClose, canOpen, onOpen }: { deviceId: string; platform?: string; online: boolean; canManage: boolean; canClose: boolean; canOpen: boolean; onOpen: (session: string) => void }) {
   const queryClient = useQueryClient();
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -24,7 +25,7 @@ export default function SessionPanel({ deviceId, online, canManage, canClose, ca
   const sessions = useQuery({ queryKey, queryFn: () => request<{ sessions: TmuxSession[] }>(base), retry: false, refetchInterval: online ? 10000 : false });
   const repairNeeded = sessions.isError && /tmux is not installed|设备代理找不到 tmux|invalid tmux session output/i.test(sessions.error.message);
   const hub = window.location.origin;
-  const repairCommand = `curl -fsSL '${hub}/install/connector.sh' | bash -s -- --hub '${hub}' --repair`;
+  const repairCommand = installCommand(deviceInstallOS(platform), hub);
   const action = useMutation({
     mutationFn: (item: Action) => {
       if (item.kind === "create") return request(base, { method: "POST", body: JSON.stringify({ name: item.name }) });
@@ -64,7 +65,7 @@ export default function SessionPanel({ deviceId, online, canManage, canClose, ca
     {online && !canManage && <p className="session-note">{canOpen ? "设备代理尚不支持会话管理" : "当前角色只能查看会话列表"}</p>}
     {inputError && <div className="notice error">{inputError}</div>}
     {action.isError && <div className="notice error">操作失败：{action.error.message}</div>}
-    {sessions.isPending ? <p className="session-note">正在读取会话…</p> : sessions.isError ? <div className="notice error">读取失败：{sessions.error.message} <button className="text-button" type="button" onClick={() => sessions.refetch()}>重试</button>{repairNeeded && <div className="session-repair"><p>请在这台设备上安装 tmux，然后在它的终端运行修复命令：</p><pre>{repairCommand}</pre><button className="text-button" type="button" onClick={() => { void navigator.clipboard.writeText(repairCommand).then(() => setRepairCopied(true)).catch(() => setRepairCopied(false)); }}>{repairCopied ? "已复制" : "复制修复命令"}</button></div>}</div> : sessions.data.sessions.length === 0 ? <p className="session-note empty-sessions">暂无会话</p> : <ul className="session-list">{sessions.data.sessions.map((session) => <li className="session-row" key={session.name}>
+    {sessions.isPending ? <p className="session-note">正在读取会话…</p> : sessions.isError ? <div className="notice error">读取失败：{sessions.error.message} <button className="text-button" type="button" onClick={() => sessions.refetch()}>重试</button>{repairNeeded && <div className="session-repair"><p>在这台设备上运行修复命令，会自动安装 tmux 并更新设备代理{platform === "windows" ? "（在 PowerShell 中运行）" : ""}：</p><pre>{repairCommand}</pre><button className="text-button" type="button" onClick={() => { void navigator.clipboard.writeText(repairCommand).then(() => setRepairCopied(true)).catch(() => setRepairCopied(false)); }}>{repairCopied ? "已复制" : "复制修复命令"}</button></div>}</div> : sessions.data.sessions.length === 0 ? <p className="session-note empty-sessions">暂无会话</p> : <ul className="session-list">{sessions.data.sessions.map((session) => <li className="session-row" key={session.name}>
       <Terminal className="terminal-icon" aria-hidden="true" /><button className="session-open" type="button" disabled={!online || !canOpen} onClick={() => onOpen(session.name)}><span className="session-info"><strong>{session.name}</strong><span>{session.windows} 个窗口{session.attached ? " · 已连接" : ""}</span></span><span className="session-enter">{canOpen ? "进入" : "只读暂未开放"}</span></button>
       {online && canManage && <div className="session-actions"><button type="button" title={`重命名 ${session.name}`} aria-label={`重命名 ${session.name}`} disabled={action.isPending} onClick={() => { setRenaming(session.name); setRenameName(session.name); setInputError(""); action.reset(); }}><Pencil /></button>{canClose && <button type="button" className="delete-button" title={`关闭 ${session.name}`} aria-label={`关闭 ${session.name}`} disabled={action.isPending} onClick={() => { action.reset(); setClosing(session.name); }}><Trash2 /></button>}</div>}
       {renaming === session.name && <form className="session-form rename-form" onSubmit={rename}><label className="sr-only" htmlFor={`rename-${deviceId}-${session.name}`}>新的会话名称</label><input id={`rename-${deviceId}-${session.name}`} autoFocus value={renameName} maxLength={64} onChange={(event) => setRenameName(event.target.value)} disabled={action.isPending} /><button type="submit" disabled={action.isPending}>保存</button><button type="button" className="subtle-button" onClick={() => setRenaming(null)}>取消</button></form>}

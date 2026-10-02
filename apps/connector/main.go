@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
@@ -31,7 +33,7 @@ func main() {
 			settings, paired = saved, true
 		}
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	logger := slog.New(slog.NewTextHandler(logOutput(), nil))
 	backoff := time.Second
 
 	for {
@@ -48,6 +50,30 @@ func main() {
 		}
 		backoff = time.Second
 	}
+}
+
+// logOutput returns SINTHMUX_CONNECTOR_LOG or the platform default log file,
+// falling back to stdout. Logs over 5 MiB are restarted on launch.
+func logOutput() io.Writer {
+	path := os.Getenv("SINTHMUX_CONNECTOR_LOG")
+	if path == "" {
+		path = defaultLogPath()
+	}
+	if path == "" {
+		return os.Stdout
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return os.Stdout
+	}
+	flags := os.O_WRONLY | os.O_CREATE | os.O_APPEND
+	if info, err := os.Stat(path); err == nil && info.Size() > 5<<20 {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	}
+	file, err := os.OpenFile(path, flags, 0600)
+	if err != nil {
+		return os.Stdout
+	}
+	return file
 }
 
 // refreshAndSave upgrades or renews the device certificate before connecting.

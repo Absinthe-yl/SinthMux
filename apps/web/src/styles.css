@@ -179,6 +179,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .workspace-bar select, .workspace-bar button, .secret-panel button { margin-left: 5px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); font-size: 12px; }
 .workspace-bar button:hover, .secret-panel button:hover { border-color: var(--accent); color: var(--accent); }
 .secret-panel { margin-bottom: 16px; padding: 15px; border: 1px solid var(--accent); border-radius: 9px; background: var(--surface); font-size: 12px; }
+.secret-panel .os-tabs { display: flex; gap: 6px; margin: 10px 0 2px; }
+.secret-panel .os-tabs button { margin-left: 0; }
+.secret-panel .os-tabs button.active { border-color: var(--accent); background: var(--accent); color: var(--surface); }
 .secret-panel pre { overflow: auto; padding: 10px; border-radius: 6px; background: var(--surface-alt); user-select: all; }
 .management-panel { margin: 0 0 16px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
 .management-heading, .management-row { display: flex; align-items: center; gap: 9px; padding: 7px 0; font-size: 12px; }

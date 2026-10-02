@@ -6,7 +6,7 @@
 
 <p><strong>一个浏览器，接续每台设备上的终端工作</strong></p>
 
-<p>把 Mac、Linux 主机和云服务器上的 tmux 会话汇聚到一个网页。终端任务留在原设备上运行，离开后随时回来接着做。</p>
+<p>把 Mac、Windows、Linux 主机和云服务器上的 tmux 会话汇聚到一个网页。终端任务留在原设备上运行，离开后随时回来接着做。</p>
 
 <p><a href="#快速开始">快速开始</a> · <a href="#核心能力">核心能力</a> · <a href="#部署与运行">部署方式</a> · <a href="https://github.com/Absinthe-yl/SinthMux/issues">问题反馈</a></p>
 
@@ -40,9 +40,9 @@ cd SinthMux
 cat deploy/.bootstrap-token
 ```
 
-登录后，打开 **登录令牌** 创建自己的常用令牌。然后点击 **添加设备**，输入设备名称，在目标机器的终端执行网页生成的命令。该机器需要 macOS 或 Linux（x86-64 / ARM64）、`tmux` 和 `curl`；无需安装 Go，也无需克隆本仓库。设备上线后，展开 **会话** 列表即可进入终端。
+登录后，打开 **登录令牌** 创建自己的常用令牌。然后点击 **添加设备**，输入设备名称，按目标机器的系统选择命令：macOS / Linux 在终端执行，Windows 在 PowerShell 执行。无需安装 Go，也无需克隆本仓库。设备上线后，展开 **会话** 列表即可进入终端。
 
-如果目标机器还没有 tmux，macOS 可运行 `brew install tmux`，Ubuntu/Debian 可运行 `sudo apt install tmux`。安装后重新执行接入命令即可。
+目标机器不需要预先安装 tmux。接入命令按以下顺序准备：先用系统已有的 tmux；没有就从 Hub 下载随附的 tmux（macOS 通用版、Linux 静态版、Windows 用兼容 tmux 的 [psmux](https://github.com/psmux/psmux)），并用 SHA-256 校验；Hub 未提供时再用 Homebrew、apt/dnf/yum/zypper/pacman/apk 或 winget 安装。随附的 tmux 只放在用户目录（`~/.local/bin/tmux` 或 `%LOCALAPPDATA%\SinthMux\tmux.exe`），不改动系统。
 
 **更新或修复已接入的设备**：在该设备上重新执行原接入命令，会保留已有设备 ID 和设备密钥，不重复配对；旧版设备会自动换成设备证书。原命令不在手边时，也可以将下面的地址替换为自己的 Hub 地址后运行：
 
@@ -99,6 +99,16 @@ docker compose --env-file deploy/.env.local -f deploy/docker-compose.yml down
 
 设备代理在目标机器上独立运行。安装脚本会尝试配置 macOS LaunchAgent 或 Linux systemd 用户服务；如果没有用户服务管理器，会提示重启后如何手动启动。已有 tmux 会话不随浏览器或 Hub 的停止而结束。
 
+### 随附 tmux
+
+Hub 镜像会打包 `deploy/bundles/` 中的 tmux。构建镜像前在一台 Mac 上运行（Linux 上运行时跳过 macOS 版本）：
+
+```bash
+./scripts/build-tmux-bundles.sh
+```
+
+脚本下载 Linux 静态版和 Windows 版 psmux，在本机编译 macOS 通用版，并生成 `SHA256SUMS`。目录为空时 Hub 照常运行，接入命令改用系统包管理器安装 tmux。
+
 ### 公网部署提示
 
 默认配置绑定 `127.0.0.1`。对外提供服务时，需要自行准备 DNS、HTTPS 证书和反向代理，并确保 `SINTHMUX_PUBLIC_URL` 是浏览器与设备都能访问的地址。设备代理在本机生成私钥，配对后获得 Hub 签发的 24 小时设备证书，每次连接用私钥签名一次性挑战；证书可经过反向代理，无需透传 TLS。设备 CA 私钥保存在数据库中，请通过 HTTPS/WSS 暴露服务并妥善保护 Hub 和数据库及其备份。
@@ -111,7 +121,7 @@ docker compose --env-file deploy/.env.local -f deploy/docker-compose.yml down
 
 **还能在本机终端使用原会话吗？** 可以。在运行 tmux 的设备上执行 `tmux attach -t '=会话名'`。
 
-**支持哪些设备？** 设备代理安装脚本支持 macOS 和 Linux 的 x86-64、ARM64。浏览器端可从能够访问 Hub 的设备使用。
+**支持哪些设备？** macOS 11+、Linux 和 Windows 10 1809+ / Windows 11，x86-64 与 ARM64。Windows 上的会话由 psmux 保存，用 ConPTY 接入网页终端，可用 `tmux attach -t 会话名` 在本机 PowerShell 中接续。浏览器端可从能够访问 Hub 的任意设备使用。
 
 ## 参与项目
 

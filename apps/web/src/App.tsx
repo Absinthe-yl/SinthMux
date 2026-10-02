@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, Laptop, Moon, RefreshCw, Server, Sun } from "lucide-react";
 import { FormEvent, lazy, Suspense, useLayoutEffect, useState } from "react";
 import { request, setCSRF } from "./api";
+import { guessInstallOS, installCommand, installOSOptions, type InstallOS } from "./installCommand";
 import ActionDialog from "./ActionDialog";
 import SessionPanel from "./SessionPanel";
 
@@ -29,7 +30,7 @@ type DialogAction =
   | { kind: "revoke-device"; device: Device };
 const memberRoles: Array<Exclude<Space["role"], "owner">> = ["admin", "operator", "viewer"];
 
-function shellQuote(value: string): string { return "'" + value.replaceAll("'", "'\\''") + "'"; }
+
 
 function initialTheme(): Theme {
   try {
@@ -80,14 +81,14 @@ function DeviceCard({ device, expanded, onToggle, onOpen, onRevoke, role }: { de
   const online = device.status === "online";
   return <article className={`device-card${expanded ? " expanded" : ""}`}>
     <div className="device-main">
-      <div className="device-icon" aria-hidden="true">{device.platform === "darwin" ? <Laptop /> : <Server />}</div>
+      <div className="device-icon" aria-hidden="true">{device.platform === "darwin" || device.platform === "windows" ? <Laptop /> : <Server />}</div>
       <div className="device-info">
         <div className="device-title"><h2>{device.name}</h2><span className={`status-dot${online ? " online" : ""}`} /><span className="status-text">{online ? "在线" : "离线"}</span></div>
         <p>{device.platform} / {device.architecture}</p>
       </div>
       {onRevoke && <button className="device-revoke" type="button" onClick={onRevoke}>移除</button>}<button className="device-toggle" type="button" aria-expanded={expanded} onClick={onToggle}>{expanded ? "收起" : "会话"}{expanded ? <ChevronUp /> : <ChevronDown />}</button>
     </div>
-    {expanded && <SessionPanel deviceId={device.id} online={online} canManage={(device.capabilities ?? []).includes("tmux.sessions.manage") && role !== "viewer"} canClose={role === undefined || role === "owner" || role === "admin"} canOpen={role !== "viewer"} onOpen={onOpen} />}
+    {expanded && <SessionPanel deviceId={device.id} platform={device.platform} online={online} canManage={(device.capabilities ?? []).includes("tmux.sessions.manage") && role !== "viewer"} canClose={role === undefined || role === "owner" || role === "admin"} canOpen={role !== "viewer"} onOpen={onOpen} />}
   </article>;
 }
 
@@ -112,7 +113,7 @@ export default function App() {
   const [selectedSpace, setSelectedSpace] = useState<string | null>(null);
   const [activeTerminal, setActiveTerminal] = useState<{ deviceId: string; deviceName: string; session: string } | null>(null);
   const [notice, setNotice] = useState("");
-  const [secret, setSecret] = useState<{ label: string; value: string; hint?: string } | null>(null);
+  const [secret, setSecret] = useState<{ label: string; value: string; hint?: string; install?: { hub: string; code: string; os: InstallOS } } | null>(null);
   const [secretCopied, setSecretCopied] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
   const [showTokens, setShowTokens] = useState(false);
@@ -172,11 +173,10 @@ export default function App() {
         case "create-device": {
           const result = await request<{ code: string; expiresAt: string; hubUrl: string }>(`/api/v1/spaces/${spaceId}/device-pairings`, { method: "POST", body: JSON.stringify({ name }) });
           const hub = result.hubUrl.replace(/\/$/, "");
-          const curlOptions = hub.startsWith("https://") ? " --proto '=https' --proto-redir '=https'" : "";
-          const command = `curl -fsSL${curlOptions} ${shellQuote(`${hub}/install/connector.sh`)} | bash -s -- --hub ${shellQuote(hub)} --code ${shellQuote(result.code)}`;
+          const os = guessInstallOS();
           const localOnly = new URL(hub).hostname === "127.0.0.1" || new URL(hub).hostname === "localhost";
           setSecretCopied(false);
-          setSecret({ label: `${name} 的接入命令`, value: command, hint: localOnly ? "配对码 5 分钟有效、只能用一次。当前 Hub 地址仅本机可访问；另一台电脑接入前需将 Hub 部署到可访问的 HTTPS 地址。目标电脑需要安装 tmux 和 curl。" : "配对码 5 分钟有效、只能用一次。在目标电脑终端执行；该电脑需要安装 tmux 和 curl。" });
+          setSecret({ label: `${name} 的接入命令`, value: installCommand(os, hub, result.code), install: { hub, code: result.code, os }, hint: localOnly ? "配对码 5 分钟有效、只能用一次。当前 Hub 地址仅本机可访问；另一台电脑接入前需将 Hub 部署到可访问的 HTTPS 地址。" : "配对码 5 分钟有效、只能用一次。macOS / Linux 在终端执行，Windows 在 PowerShell 执行；没有 tmux 时会自动安装。" });
           break;
         }
         case "add-member": {
@@ -229,7 +229,7 @@ export default function App() {
       {formal && me.data && <div className="workspace-bar"><label>空间 <select aria-label="当前空间" value={activeSpace?.id ?? ""} onChange={(event) => { setSelectedSpace(event.target.value); setSelectedDevice(null); }}><option value="" disabled>选择空间</option>{me.data.spaces.map((space) => <option value={space.id} key={space.id}>{space.name} · {space.role}</option>)}</select></label><button type="button" onClick={() => openDialog({ kind: "create-space" })}>新建空间</button>{activeSpace && (activeSpace.role === "owner" || activeSpace.role === "admin") && <button type="button" onClick={() => openDialog({ kind: "create-device" })}>添加设备</button>}{activeSpace && <button type="button" onClick={() => setShowMembers(!showMembers)}>成员</button>}<button type="button" onClick={() => setShowTokens(!showTokens)}>登录令牌</button><button type="button" onClick={() => void logout()}>退出</button></div>}
       {formal && showMembers && activeSpace && <div className="management-panel"><div className="management-heading"><strong>成员</strong>{me.data?.user.githubId && <span>我的 GitHub ID：{me.data.user.githubId}</span>}{activeSpace.role === "owner" && <><button type="button" onClick={() => openDialog({ kind: "add-member" })}>添加令牌成员</button><button type="button" onClick={() => openDialog({ kind: "add-github-member" })}>添加 GitHub 成员</button></>}</div>{members.data?.members.map((member) => <div className="management-row" key={member.userId}><span>{member.name} · {member.role}</span>{activeSpace.role === "owner" && member.role !== "owner" && <><button type="button" onClick={() => openDialog({ kind: "change-role", member })}>修改角色</button><button type="button" onClick={() => openDialog({ kind: "remove-member", member })}>移除</button></>}</div>)}</div>}
       {formal && showTokens && <div className="management-panel"><div className="management-heading"><strong>我的登录令牌</strong><button type="button" onClick={() => openDialog({ kind: "create-token" })}>新建令牌</button></div>{tokens.data?.tokens.map((token) => <div className="management-row" key={token.id}><span>{token.name} · {new Date(token.expiresAt).toLocaleDateString()}</span><button type="button" onClick={() => openDialog({ kind: "revoke-token", token })}>撤销</button></div>)}</div>}
-      {secret && <div className="secret-panel"><strong>{secret.label}</strong><pre>{secret.value}</pre>{secret.hint && <p>{secret.hint}</p>}<button type="button" onClick={() => { void navigator.clipboard.writeText(secret.value).then(() => setSecretCopied(true)).catch(() => setNotice("复制失败，请手动选中内容复制。")); }}>{secretCopied ? "已复制" : "复制"}</button><button type="button" onClick={() => setSecret(null)}>关闭</button></div>}
+      {secret && <div className="secret-panel"><strong>{secret.label}</strong>{secret.install && <div className="os-tabs" role="tablist">{installOSOptions.map((option) => <button key={option.id} type="button" role="tab" aria-selected={secret.install?.os === option.id} className={secret.install?.os === option.id ? "active" : ""} onClick={() => { const install = secret.install!; setSecretCopied(false); setSecret({ ...secret, value: installCommand(option.id, install.hub, install.code), install: { ...install, os: option.id } }); }}>{option.label}</button>)}</div>}<pre>{secret.value}</pre>{secret.hint && <p>{secret.hint}</p>}<button type="button" onClick={() => { void navigator.clipboard.writeText(secret.value).then(() => setSecretCopied(true)).catch(() => setNotice("复制失败，请手动选中内容复制。")); }}>{secretCopied ? "已复制" : "复制"}</button><button type="button" onClick={() => setSecret(null)}>关闭</button></div>}
       {notice && <div className="notice error">{notice}</div>}
       {devices.isError && <div className="notice error">无法读取设备列表，请确认 Hub 已启动。</div>}
       <section className="device-list" aria-label="设备列表">{items.length ? items.map((device) => <DeviceCard key={device.id} device={device} role={formal ? activeSpace?.role : undefined} onRevoke={formal && (activeSpace?.role === "owner" || activeSpace?.role === "admin") ? () => openDialog({ kind: "revoke-device", device }) : undefined} expanded={selectedDevice === device.id} onToggle={() => setSelectedDevice(selectedDevice === device.id ? null : device.id)} onOpen={(session) => setActiveTerminal({ deviceId: device.id, deviceName: device.name, session })} />) : !devices.isError && <div className="empty-state"><Server /><strong>{devices.isPending ? "正在加载设备" : "还没有设备"}</strong><span>{devices.isPending ? "" : "添加设备并运行设备代理后，设备会出现在这里。"}</span></div>}</section>

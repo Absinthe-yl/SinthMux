@@ -25,6 +25,9 @@ const version = "0.0.1-dev"
 //go:embed install-connector.sh
 var installConnectorScript []byte
 
+//go:embed install-connector.ps1
+var installConnectorPowerShell []byte
+
 func main() {
 	settings := config.HubFromEnv()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -104,20 +107,12 @@ func main() {
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write(installConnectorScript)
 	})
-	router.Get("/downloads/{file}", func(w http.ResponseWriter, r *http.Request) {
-		file := chi.URLParam(r, "file")
-		if file != "sinthmux-connector-darwin-amd64" && file != "sinthmux-connector-darwin-arm64" && file != "sinthmux-connector-linux-amd64" && file != "sinthmux-connector-linux-arm64" {
-			http.NotFound(w, r)
-			return
-		}
-		dir := os.Getenv("SINTHMUX_CONNECTOR_DOWNLOAD_DIR")
-		if dir == "" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/octet-stream")
-		http.ServeFile(w, r, dir+"/"+file)
+	router.Get("/install/connector.ps1", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(installConnectorPowerShell)
 	})
+	router.Get("/downloads/{file}", downloadHandler(os.Getenv("SINTHMUX_CONNECTOR_DOWNLOAD_DIR")))
 	sessionAPI := sessionHandler{manager: manager}
 	terminalAPI := relay.NewTerminalHandler(manager)
 	if authServer != nil {

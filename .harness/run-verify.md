@@ -6,7 +6,7 @@
 
 ## Docker 运行
 
-`make docker-up` 调用 `scripts/docker-up.sh`，使用 `deploy/docker-compose.yml` 构建 PostgreSQL、Hub 和 Web。`deploy/Caddyfile` 将 `/api`、`/ws`、`/health`、安装与下载路径转给 Hub，其余路径作为 Web 静态资源。默认 Web 与 Hub 端口只绑定本机。首次初始化会把临时 Owner 用户令牌写入被 Git 忽略的 `deploy/.bootstrap-token`；数据库密码在 `deploy/.env.local`。设备代理不在 Compose 中，应在运行 tmux 的机器上安装。
+`make docker-up` 调用 `scripts/docker-up.sh`，使用 `deploy/docker-compose.yml` 构建 PostgreSQL、Hub 和 Web。`deploy/Caddyfile` 将 `/api`、`/ws`、`/health`、安装与下载路径转给 Hub，其余路径作为 Web 静态资源。默认 Web 与 Hub 端口只绑定本机。首次初始化会把临时 Owner 用户令牌写入被 Git 忽略的 `deploy/.bootstrap-token`；数据库密码在 `deploy/.env.local`。设备代理不在 Compose 中，应在运行 tmux 的机器上安装。Hub 镜像会把 `deploy/bundles/`（Git 忽略，由 `scripts/build-tmux-bundles.sh` 在 Mac 上生成）中的随附 tmux 打包进 `/downloads`；目录为空也能构建。
 
 公网接入需能访问的 HTTPS 入口和正确的 `SINTHMUX_PUBLIC_URL`，详见 `README.md` 与 `docs/DEPLOYMENT_SINTHE_TOP.md`。
 
