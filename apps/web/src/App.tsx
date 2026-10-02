@@ -1,12 +1,33 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, Laptop, Moon, RefreshCw, Server, Sun } from "lucide-react";
-import { FormEvent, lazy, Suspense, useLayoutEffect, useState } from "react";
+import { FormEvent, lazy, Suspense, useLayoutEffect, useRef, useState } from "react";
 import { request, setCSRF } from "./api";
 import { guessInstallOS, installCommand, installOSOptions, type InstallOS } from "./installCommand";
 import ActionDialog from "./ActionDialog";
 import SessionPanel from "./SessionPanel";
 
 const TerminalView = lazy(() => import("./TerminalView"));
+
+// Browsers without CSS field-sizing size a <select> to its longest option.
+// Measure the selected label instead so the picker hugs the current space name.
+function useFitSelect() {
+  const ref = useRef<HTMLSelectElement>(null);
+  // Runs after every render: the select only mounts once login data arrives,
+  // and measuring one short label is cheap.
+  useLayoutEffect(() => {
+    const select = ref.current;
+    if (!select || CSS.supports("field-sizing", "content")) return;
+    const label = select.selectedOptions[0]?.text ?? "";
+    const style = getComputedStyle(select);
+    const context = document.createElement("canvas").getContext("2d");
+    if (!context) return;
+    context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    const extra = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight) + parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth);
+    const width = `${Math.ceil(context.measureText(label).width + extra) + 2}px`;
+    if (select.style.width !== width) select.style.width = width;
+  });
+  return ref;
+}
 
 type Device = {
   id: string;
@@ -133,6 +154,7 @@ export default function App() {
   const me = useQuery({ queryKey: ["me"], enabled: formal, retry: false, queryFn: async () => { const result = await getJSON<Me>("/api/v1/auth/me"); setCSRF(result.csrf); return result; } });
   const devices = useQuery({ queryKey: ["devices"], enabled: status.data?.authMode === "development" || (formal && !!me.data), queryFn: () => getJSON<{ devices: Device[] }>("/api/v1/devices"), refetchInterval: 5000 });
   const activeSpace = me.data?.spaces.find((space) => space.id === selectedSpace) ?? me.data?.spaces[0];
+  const spaceSelect = useFitSelect();
   const members = useQuery({ queryKey: ["members", activeSpace?.id], enabled: formal && showMembers && !!activeSpace, queryFn: () => request<{ members: Member[] }>(`/api/v1/spaces/${activeSpace!.id}/members`) });
   const tokens = useQuery({ queryKey: ["tokens"], enabled: formal && showTokens && !!me.data, queryFn: () => request<{ tokens: LoginToken[] }>("/api/v1/auth/tokens") });
   const items = (devices.data?.devices ?? []).filter((device) => !formal || device.spaceId === activeSpace?.id);
@@ -226,7 +248,7 @@ export default function App() {
     <main className={`shell${activeTerminal ? " terminal-shell" : ""}`} id="top">
       {activeTerminal ? <Suspense fallback={<div className="session-note">正在打开终端…</div>}><TerminalView key={`${activeTerminal.deviceId}:${activeTerminal.session}`} {...activeTerminal} theme={theme} onBack={() => setActiveTerminal(null)} /></Suspense> : <>
       <div className="page-heading"><div><h1>设备 <span>{items.length}</span></h1></div><button className="refresh-button" type="button" onClick={() => { void status.refetch(); void devices.refetch(); }}><RefreshCw />刷新</button></div>
-      {formal && me.data && <div className="workspace-bar"><label>空间 <select aria-label="当前空间" value={activeSpace?.id ?? ""} onChange={(event) => { setSelectedSpace(event.target.value); setSelectedDevice(null); }}><option value="" disabled>选择空间</option>{me.data.spaces.map((space) => <option value={space.id} key={space.id}>{space.name} · {space.role}</option>)}</select></label><button type="button" onClick={() => openDialog({ kind: "create-space" })}>新建空间</button>{activeSpace && (activeSpace.role === "owner" || activeSpace.role === "admin") && <button type="button" onClick={() => openDialog({ kind: "create-device" })}>添加设备</button>}{activeSpace && <button type="button" onClick={() => setShowMembers(!showMembers)}>成员</button>}<button type="button" onClick={() => setShowTokens(!showTokens)}>登录令牌</button><button type="button" onClick={() => void logout()}>退出</button></div>}
+      {formal && me.data && <div className="workspace-bar"><label>空间 <select ref={spaceSelect} aria-label="当前空间" value={activeSpace?.id ?? ""} onChange={(event) => { setSelectedSpace(event.target.value); setSelectedDevice(null); }}><option value="" disabled>选择空间</option>{me.data.spaces.map((space) => <option value={space.id} key={space.id}>{space.name} · {space.role}</option>)}</select></label><button type="button" onClick={() => openDialog({ kind: "create-space" })}>新建空间</button>{activeSpace && (activeSpace.role === "owner" || activeSpace.role === "admin") && <button type="button" onClick={() => openDialog({ kind: "create-device" })}>添加设备</button>}{activeSpace && <button type="button" onClick={() => setShowMembers(!showMembers)}>成员</button>}<button type="button" onClick={() => setShowTokens(!showTokens)}>登录令牌</button><button type="button" onClick={() => void logout()}>退出</button></div>}
       {formal && showMembers && activeSpace && <div className="management-panel"><div className="management-heading"><strong>成员</strong>{me.data?.user.githubId && <span>我的 GitHub ID：{me.data.user.githubId}</span>}{activeSpace.role === "owner" && <><button type="button" onClick={() => openDialog({ kind: "add-member" })}>添加令牌成员</button><button type="button" onClick={() => openDialog({ kind: "add-github-member" })}>添加 GitHub 成员</button></>}</div>{members.data?.members.map((member) => <div className="management-row" key={member.userId}><span>{member.name} · {member.role}</span>{activeSpace.role === "owner" && member.role !== "owner" && <><button type="button" onClick={() => openDialog({ kind: "change-role", member })}>修改角色</button><button type="button" onClick={() => openDialog({ kind: "remove-member", member })}>移除</button></>}</div>)}</div>}
       {formal && showTokens && <div className="management-panel"><div className="management-heading"><strong>我的登录令牌</strong><button type="button" onClick={() => openDialog({ kind: "create-token" })}>新建令牌</button></div>{tokens.data?.tokens.map((token) => <div className="management-row" key={token.id}><span>{token.name} · {new Date(token.expiresAt).toLocaleDateString()}</span><button type="button" onClick={() => openDialog({ kind: "revoke-token", token })}>撤销</button></div>)}</div>}
       {secret && <div className="secret-panel"><strong>{secret.label}</strong>{secret.install && <div className="os-tabs" role="tablist">{installOSOptions.map((option) => <button key={option.id} type="button" role="tab" aria-selected={secret.install?.os === option.id} className={secret.install?.os === option.id ? "active" : ""} onClick={() => { const install = secret.install!; setSecretCopied(false); setSecret({ ...secret, value: installCommand(option.id, install.hub, install.code), install: { ...install, os: option.id } }); }}>{option.label}</button>)}</div>}<pre>{secret.value}</pre>{secret.hint && <p>{secret.hint}</p>}<button type="button" onClick={() => { void navigator.clipboard.writeText(secret.value).then(() => setSecretCopied(true)).catch(() => setNotice("复制失败，请手动选中内容复制。")); }}>{secretCopied ? "已复制" : "复制"}</button><button type="button" onClick={() => setSecret(null)}>关闭</button></div>}
