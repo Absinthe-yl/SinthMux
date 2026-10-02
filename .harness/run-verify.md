@@ -18,7 +18,7 @@
 git -c http.proxy=socks5h://127.0.0.1:7897 -c http.version=HTTP/1.1 push origin main
 ```
 
-代理端口可能变化，重用前先用 `scutil --proxy` 查看 `SOCKSProxy`、`SOCKSPort` 和 `SOCKSEnable`。此设置仅作用于单次 Git 命令，不修改仓库或全局 Git 配置。
+代理端口可能变化，重用前先用 `scutil --proxy` 查看 `SOCKSProxy`、`SOCKSPort` 和 `SOCKSEnable`。此设置仅作用于单次 Git 命令，不修改仓库或全局 Git 配置。若环境中设置了 `HTTPS_PROXY`/`https_proxy`，它们会覆盖 `-c http.proxy`，需在命令前加 `env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy`。
 
 ## 验证矩阵
 
