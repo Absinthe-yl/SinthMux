@@ -14,7 +14,9 @@
 
 ```bash
 docker compose --env-file deploy/.env.local -f deploy/docker-compose.yml -f deploy/docker-compose.public.yml up -d --build
-```部署记录描述某次环境状态，改部署前以当前 Compose、Caddyfile 和运行环境为准。Login Broker 使用独立的 `deploy/login-broker.compose.yml`。
+```
+
+部署记录描述某次环境状态，改部署前以当前 Compose、Caddyfile 和运行环境为准。Login Broker 使用独立的 `deploy/login-broker.compose.yml`。
 
 ## 当前开发机的 GitHub 推送
 
