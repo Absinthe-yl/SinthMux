@@ -178,6 +178,10 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .workspace-bar label { margin-right: auto; color: var(--muted); font-size: 12px; }
 .workspace-bar select, .workspace-bar button, .secret-panel button { margin-left: 5px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); font-size: 12px; }
 .workspace-bar button:hover, .secret-panel button:hover { border-color: var(--accent); color: var(--accent); }
+/* Native select arrows sit flush against the border; draw our own with breathing room. */
+.workspace-bar select, .dialog-field select { appearance: none; -webkit-appearance: none; padding-right: 34px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; background-size: 12px; text-overflow: ellipsis; cursor: pointer; }
+.workspace-bar select { max-width: min(320px, 70vw); }
+.workspace-bar select:hover { border-color: var(--accent); }
 .secret-panel { margin-bottom: 16px; padding: 15px; border: 1px solid var(--accent); border-radius: 9px; background: var(--surface); font-size: 12px; }
 .secret-panel .os-tabs { display: flex; gap: 6px; margin: 10px 0 2px; }
 .secret-panel .os-tabs button { margin-left: 0; }
@@ -196,7 +200,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .dialog-description { margin: 10px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 .dialog-fields { display: grid; gap: 16px; margin-top: 22px; }
 .dialog-field { display: grid; gap: 7px; color: var(--ink); font-size: 12px; font-weight: 600; }
-.dialog-field input, .dialog-field select { width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; outline: none; background: var(--surface-alt); color: var(--ink); font-size: 14px; font-weight: 400; }
+.dialog-field input, .dialog-field select { width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; outline: none; background-color: var(--surface-alt); color: var(--ink); font-size: 14px; font-weight: 400; }
 .dialog-field input:focus, .dialog-field select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .dialog-error { margin: 16px 0 0; color: var(--danger); font-size: 12px; line-height: 1.5; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 26px; }
