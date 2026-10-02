@@ -16,6 +16,8 @@
 docker compose --env-file deploy/.env.local -f deploy/docker-compose.yml -f deploy/docker-compose.public.yml up -d --build
 ```
 
+同一台服务器上的其他站点（如项目官网）可共用这个 80/443 入口：Caddyfile.public 会导入 `SINTHMUX_EXTRA_SITES_DIR`（默认 `deploy/sites.d/`）下的 `*.caddy` 站点块，被代理的容器需加入 `deploy_default` 网络，详见 `deploy/sites.d/README.md`。
+
 部署记录描述某次环境状态，改部署前以当前 Compose、Caddyfile 和运行环境为准。Login Broker 使用独立的 `deploy/login-broker.compose.yml`。
 
 ## 当前开发机的 GitHub 推送

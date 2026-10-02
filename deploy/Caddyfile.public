@@ -26,3 +26,7 @@
 		-Server
 	}
 }
+
+# Extra sites sharing this 80/443 entry (for example the project website).
+# Each *.caddy file in SINTHMUX_EXTRA_SITES_DIR is one site block; empty is fine.
+import /etc/caddy/sites/*.caddy

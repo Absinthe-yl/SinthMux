@@ -16,6 +16,8 @@ services:
       SINTHMUX_DEFAULT_SNI: ${SINTHMUX_DEFAULT_SNI:-${SINTHMUX_SITE}}
     volumes:
       - ./Caddyfile.public:/etc/caddy/Caddyfile:ro
+      # Extra site blocks imported by Caddyfile.public (see deploy/sites.d/README.md).
+      - ${SINTHMUX_EXTRA_SITES_DIR:-./sites.d}:/etc/caddy/sites:ro
       - sinthmux-caddy-data:/data
       - sinthmux-caddy-config:/config
 
