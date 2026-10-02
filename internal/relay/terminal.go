@@ -31,11 +31,12 @@ type TerminalGrant struct {
 }
 
 type TerminalHandler struct {
-	Manager       *Manager
-	mu            sync.Mutex
-	tickets       map[string]terminalTicket
-	ValidateGrant func(context.Context, TerminalGrant) bool
-	OriginPattern string
+	Manager          *Manager
+	mu               sync.Mutex
+	tickets          map[string]terminalTicket
+	ValidateGrant    func(context.Context, TerminalGrant) bool
+	OriginPattern    string
+	LANOriginPattern string
 }
 
 func NewTerminalHandler(manager *Manager) *TerminalHandler {
@@ -121,6 +122,9 @@ func (h *TerminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	origins := []string{"localhost:*", "127.0.0.1:*"}
 	if h.OriginPattern != "" {
 		origins = []string{h.OriginPattern}
+	}
+	if h.LANOriginPattern != "" {
+		origins = append(origins, h.LANOriginPattern)
 	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: origins, Subprotocols: []string{"sinthmux.v1"}})
 	if err != nil {

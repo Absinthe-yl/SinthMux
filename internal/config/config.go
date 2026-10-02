@@ -7,6 +7,7 @@ type Hub struct {
 	DevToken            string
 	DatabaseURL         string
 	PublicURL           string
+	LANOrigin           string
 	GithubClientID      string
 	GithubClientSecret  string
 	AuthBrokerURL       string
@@ -19,6 +20,9 @@ type Connector struct {
 	DeviceToken string
 	DeviceID    string
 	Name        string
+	// DeviceKey and DeviceCertificate are base64url PKCS#8 and X.509 DER.
+	DeviceKey         string `json:",omitempty"`
+	DeviceCertificate string `json:",omitempty"`
 }
 
 func HubFromEnv() Hub {
@@ -27,6 +31,7 @@ func HubFromEnv() Hub {
 		DevToken:            env("SINTHMUX_DEV_TOKEN", "sinthmux-local-dev"),
 		DatabaseURL:         os.Getenv("SINTHMUX_DATABASE_URL"),
 		PublicURL:           os.Getenv("SINTHMUX_PUBLIC_URL"),
+		LANOrigin:           os.Getenv("SINTHMUX_LAN_ORIGIN"),
 		GithubClientID:      os.Getenv("SINTHMUX_GITHUB_CLIENT_ID"),
 		GithubClientSecret:  os.Getenv("SINTHMUX_GITHUB_CLIENT_SECRET"),
 		AuthBrokerURL:       os.Getenv("SINTHMUX_AUTH_BROKER_URL"),

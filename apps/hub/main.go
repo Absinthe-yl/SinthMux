@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -59,12 +58,31 @@ func main() {
 			logger.Error("SINTHMUX_PUBLIC_URL must be HTTPS, except on localhost")
 			os.Exit(1)
 		}
-		authServer = auth.NewServer(store, auth.OAuthConfig{ClientID: settings.GithubClientID, ClientSecret: settings.GithubClientSecret, PublicURL: settings.PublicURL, BrokerURL: settings.AuthBrokerURL, BrokerPublicKey: settings.AuthBrokerPublicKey})
+		if settings.LANOrigin != "" {
+			lan, lanErr := url.Parse(settings.LANOrigin)
+			privateIP := false
+			if lan != nil {
+				ip := net.ParseIP(lan.Hostname())
+				privateIP = ip != nil && ip.IsPrivate()
+			}
+			if lanErr != nil || lan == nil || public.Scheme != "http" || lan.Scheme != "http" || lan.User != nil || lan.Path != "" || lan.RawQuery != "" || lan.Fragment != "" || !privateIP || lan.Port() == "" {
+				logger.Error("SINTHMUX_LAN_ORIGIN must be an HTTP private-IP origin with a port, used only with a local HTTP public URL")
+				os.Exit(1)
+			}
+		}
+		authServer = auth.NewServer(store, auth.OAuthConfig{ClientID: settings.GithubClientID, ClientSecret: settings.GithubClientSecret, PublicURL: settings.PublicURL, LANOrigin: settings.LANOrigin, BrokerURL: settings.AuthBrokerURL, BrokerPublicKey: settings.AuthBrokerPublicKey})
 		if (settings.AuthBrokerURL != "" || settings.AuthBrokerPublicKey != "") && !authServer.BrokerEnabled() {
 			logger.Error("SINTHMUX_AUTH_BROKER_URL and SINTHMUX_AUTH_BROKER_PUBLIC_KEY must form a valid login broker configuration")
 			os.Exit(1)
 		}
 		authServer.OnDeviceRevoked = func(id string) { manager.Revoke(id); registry.Disconnect(id) }
+		ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+		err = authServer.LoadDeviceAuthority(ctx)
+		cancel()
+		if err != nil {
+			logger.Error("device certificate authority unavailable", "error", err)
+			os.Exit(1)
+		}
 	} else {
 		host, _, err := net.SplitHostPort(settings.Address)
 		if err != nil || (host != "127.0.0.1" && host != "localhost" && host != "::1") {
@@ -105,6 +123,10 @@ func main() {
 	if authServer != nil {
 		public, _ := url.Parse(settings.PublicURL)
 		terminalAPI.OriginPattern = public.Host
+		if settings.LANOrigin != "" {
+			lan, _ := url.Parse(settings.LANOrigin)
+			terminalAPI.LANOriginPattern = lan.Host
+		}
 		terminalAPI.ValidateGrant = func(ctx context.Context, grant relay.TerminalGrant) bool {
 			return authServer.Store.TerminalAllowed(ctx, grant.UserID, grant.DeviceID, grant.SpaceID, grant.SessionHash)
 		}
@@ -196,9 +218,7 @@ func main() {
 	router.Handle("/ws/v1/terminal", terminalAPI)
 	connectorHandler := relay.ConnectorHandler{Registry: registry, Manager: manager, DevToken: settings.DevToken}
 	if authServer != nil {
-		connectorHandler.AuthenticateDevice = func(ctx context.Context, id, authorization string) bool {
-			return strings.HasPrefix(authorization, "Bearer ") && authServer.Store.AuthenticateDevice(ctx, id, strings.TrimPrefix(authorization, "Bearer "))
-		}
+		connectorHandler.AuthenticateDevice = authServer.AuthenticateConnector
 	}
 	router.Handle("/ws/v1/connectors/connect", connectorHandler)
 

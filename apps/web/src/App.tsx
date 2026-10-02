@@ -13,7 +13,6 @@ type Device = {
   name: string;
   platform: string;
   architecture: string;
-  connectorVersion: string;
   status: string;
   capabilities?: string[];
 };
@@ -84,7 +83,7 @@ function DeviceCard({ device, expanded, onToggle, onOpen, onRevoke, role }: { de
       <div className="device-icon" aria-hidden="true">{device.platform === "darwin" ? <Laptop /> : <Server />}</div>
       <div className="device-info">
         <div className="device-title"><h2>{device.name}</h2><span className={`status-dot${online ? " online" : ""}`} /><span className="status-text">{online ? "在线" : "离线"}</span></div>
-        <p>{device.platform} / {device.architecture} <span>·</span> 设备代理 {device.connectorVersion}</p>
+        <p>{device.platform} / {device.architecture}</p>
       </div>
       {onRevoke && <button className="device-revoke" type="button" onClick={onRevoke}>移除</button>}<button className="device-toggle" type="button" aria-expanded={expanded} onClick={onToggle}>{expanded ? "收起" : "会话"}{expanded ? <ChevronUp /> : <ChevronDown />}</button>
     </div>

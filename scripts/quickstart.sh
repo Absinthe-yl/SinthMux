@@ -11,13 +11,6 @@ for program in go node npm tmux curl nc; do
   fi
 done
 
-for port in 8090 5173; do
-  if nc -z -w 1 127.0.0.1 "$port" >/dev/null 2>&1; then
-    printf '本机端口 %s 已被占用，请先停止现有服务。\n' "$port" >&2
-    exit 1
-  fi
-done
-
 if [[ -f .env ]]; then
   set -a
   # The local .env is user-owned and ignored by Git.
@@ -26,6 +19,21 @@ if [[ -f .env ]]; then
 fi
 export SINTHMUX_HUB_ADDR=127.0.0.1:8090
 export SINTHMUX_CONNECTOR_HUB_URL=ws://127.0.0.1:8090/ws/v1/connectors/connect
+web_host="${SINTHMUX_WEB_HOST:-127.0.0.1}"
+web_url="http://${web_host}:5173"
+vite_host="$web_host"
+if [[ "$web_host" != 127.0.0.1 && "$web_host" != localhost && "${SINTHMUX_LAN_ORIGIN:-}" != "$web_url" ]]; then
+  printf '局域网测试需要 SINTHMUX_LAN_ORIGIN=%s。\n' "$web_url" >&2
+  exit 1
+fi
+if [[ "$web_host" != 127.0.0.1 && "$web_host" != localhost ]]; then
+  # Keep localhost available for already paired device proxies.
+  vite_host=0.0.0.0
+fi
+if nc -z -w 1 127.0.0.1 8090 >/dev/null 2>&1 || nc -z -w 1 127.0.0.1 5173 >/dev/null 2>&1 || nc -z -w 1 "$web_host" 5173 >/dev/null 2>&1; then
+  printf 'Hub 8090 或网页 5173 端口已被占用，请先停止现有服务。\n' >&2
+  exit 1
+fi
 
 umask 077
 mkdir -p .run/bin .run/log
@@ -71,22 +79,22 @@ fi
 
 .run/bin/sinthmux-connector > .run/log/connector.log 2>&1 &
 connector_pid=$!
-(cd apps/web && exec node node_modules/vite/bin/vite.js --host 127.0.0.1) > .run/log/web.log 2>&1 &
+(cd apps/web && exec node node_modules/vite/bin/vite.js --host "$vite_host") > .run/log/web.log 2>&1 &
 web_pid=$!
 for _ in {1..30}; do
-  if curl --silent --fail http://127.0.0.1:5173/ >/dev/null; then break; fi
+  if curl --silent --fail "$web_url/" >/dev/null; then break; fi
   if ! kill -0 "$web_pid" 2>/dev/null; then
     cat .run/log/web.log >&2
     exit 1
   fi
   sleep 1
 done
-if ! curl --silent --fail http://127.0.0.1:5173/ >/dev/null; then
+if ! curl --silent --fail "$web_url/" >/dev/null; then
   cat .run/log/web.log >&2
   exit 1
 fi
 
-printf 'SinthMux 已启动：http://127.0.0.1:5173/\n'
+printf 'SinthMux 已启动：%s/\n' "$web_url"
 printf '日志在 .run/log/；按 Ctrl+C 停止服务，tmux 会话会继续运行。\n'
 while true; do
   for pid in "$hub_pid" "$connector_pid" "$web_pid"; do

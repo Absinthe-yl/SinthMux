@@ -44,7 +44,7 @@ cat deploy/.bootstrap-token
 
 如果目标机器还没有 tmux，macOS 可运行 `brew install tmux`，Ubuntu/Debian 可运行 `sudo apt install tmux`。安装后重新执行接入命令即可。
 
-**更新或修复已接入的设备**：在该设备上重新执行原接入命令，会保留已有设备 ID 和令牌，不重复配对。原命令不在手边时，也可以将下面的地址替换为自己的 Hub 地址后运行：
+**更新或修复已接入的设备**：在该设备上重新执行原接入命令，会保留已有设备 ID 和设备密钥，不重复配对；旧版设备会自动换成设备证书。原命令不在手边时，也可以将下面的地址替换为自己的 Hub 地址后运行：
 
 ```bash
 curl -fsSL 'https://hub.example.com/install/connector.sh' | bash -s -- --hub 'https://hub.example.com' --repair
@@ -53,6 +53,15 @@ curl -fsSL 'https://hub.example.com/install/connector.sh' | bash -s -- --hub 'ht
 修复命令只适用于已经配对到同一 Hub 的设备。完成后回到网页确认设备在线；macOS 和普通后台模式的运行日志在 `~/.config/sinthmux/connector.log`，systemd 用户服务可通过 `journalctl --user -u sinthmux-connector` 查看。
 
 默认 Docker 配置只允许本机访问，因此首次体验请先把 **Hub 所在电脑**接入。要从另一台电脑接入设备或用手机访问，请将 Web 与 Hub 放在可访问的 HTTPS 地址下，并将 `SINTHMUX_PUBLIC_URL` 设置为该地址；设备代理通过出站连接接入，无需在设备上开放端口。
+
+**同一 Wi-Fi 下临时用手机测试本地开发版**：在仓库根目录的 `.env` 中保留 `SINTHMUX_PUBLIC_URL=http://127.0.0.1:5173`，并加入以下两项（IP 换成运行 Hub 的电脑当前局域网地址），再重新运行 `./scripts/quickstart.sh`：
+
+```dotenv
+SINTHMUX_WEB_HOST=192.168.1.103
+SINTHMUX_LAN_ORIGIN=http://192.168.1.103:5173
+```
+
+手机连接同一 Wi-Fi 后访问 `http://192.168.1.103:5173`。此方式仅用于可信局域网内的临时测试，登录令牌会通过未加密的 HTTP 传输；公网访问仍需 HTTPS。
 
 ## 你可以这样使用
 
@@ -67,7 +76,7 @@ curl -fsSL 'https://hub.example.com/install/connector.sh' | bash -s -- --hub 'ht
 ```text
 浏览器 ── HTTP / WebSocket ──▶ Hub ◀── 设备代理的出站连接 ──▶ tmux ──▶ 你的程序
                               │
-                              └── PostgreSQL：用户、空间、设备与令牌
+                              └── PostgreSQL：用户、空间、设备、证书与令牌
 ```
 
 Hub 提供网页 API、设备管理和终端中继；设备代理运行在目标机器上，负责调用 tmux。浏览器进入终端时使用短期一次性票据，连接中断后重新取得票据并附着到原会话。Hub 是可信的中继组件，可以看到终端数据；SinthMux 当前不提供端到端加密。
@@ -92,7 +101,7 @@ docker compose --env-file deploy/.env.local -f deploy/docker-compose.yml down
 
 ### 公网部署提示
 
-默认配置绑定 `127.0.0.1`。对外提供服务时，需要自行准备 DNS、HTTPS 证书和反向代理，并确保 `SINTHMUX_PUBLIC_URL` 是浏览器与设备都能访问的地址。设备代理使用配对后获得的 Bearer 凭据连接 Hub；请通过 HTTPS/WSS 暴露服务并妥善保护 Hub 和数据库。
+默认配置绑定 `127.0.0.1`。对外提供服务时，需要自行准备 DNS、HTTPS 证书和反向代理，并确保 `SINTHMUX_PUBLIC_URL` 是浏览器与设备都能访问的地址。设备代理在本机生成私钥，配对后获得 Hub 签发的 24 小时设备证书，每次连接用私钥签名一次性挑战；证书可经过反向代理，无需透传 TLS。设备 CA 私钥保存在数据库中，请通过 HTTPS/WSS 暴露服务并妥善保护 Hub 和数据库及其备份。
 
 ## 常见问题
 

@@ -21,6 +21,23 @@ import (
 	"github.com/sinthmux/sinthmux/pkg/protocol"
 )
 
+func TestLocalNetworkOrigin(t *testing.T) {
+	server := NewServer(nil, OAuthConfig{PublicURL: "http://127.0.0.1:5173", LANOrigin: "http://192.168.1.103:5173"})
+	for origin, want := range map[string]bool{
+		"http://127.0.0.1:5173":      true,
+		"http://192.168.1.103:5173":  true,
+		"http://192.168.1.104:5173":  false,
+		"https://192.168.1.103:5173": false,
+		"http://evil.example":        false,
+	} {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token", nil)
+		request.Header.Set("Origin", origin)
+		if got := server.originAllowed(request); got != want {
+			t.Errorf("origin %s allowed=%t, want %t", origin, got, want)
+		}
+	}
+}
+
 func TestRoleMatrix(t *testing.T) {
 	for _, tc := range []struct {
 		role, action string
@@ -128,11 +145,11 @@ func TestFormalStoreIntegration(t *testing.T) {
 	if err != nil || time.Until(expires) <= 0 {
 		t.Fatalf("new pairing: %v", err)
 	}
-	paired, pairedToken, err := s.RedeemDevicePairing(ctx, pairing)
+	paired, pairedToken, err := s.RedeemDevicePairing(ctx, pairing, nil)
 	if err != nil || paired.Name != "paired-device" || !s.AuthenticateDevice(ctx, paired.ID, pairedToken) {
 		t.Fatalf("redeem pairing: %+v %v", paired, err)
 	}
-	if _, _, err := s.RedeemDevicePairing(ctx, pairing); err == nil {
+	if _, _, err := s.RedeemDevicePairing(ctx, pairing, nil); err == nil {
 		t.Fatal("pairing code was accepted twice")
 	}
 	expired, _, err := s.NewDevicePairing(ctx, spaceID, owner.ID, "expired-device")
@@ -142,14 +159,12 @@ func TestFormalStoreIntegration(t *testing.T) {
 	if _, err := s.DB.ExecContext(ctx, `UPDATE device_pairings SET expires_at=now()-interval '1 second' WHERE code_hash=$1`, digest(expired)); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.RedeemDevicePairing(ctx, expired); err == nil {
+	if _, _, err := s.RedeemDevicePairing(ctx, expired, nil); err == nil {
 		t.Fatal("expired pairing code was accepted")
 	}
 	manager := relay.NewManager()
 	registry := devices.NewRegistry()
-	connectorHTTP := relay.ConnectorHandler{Registry: registry, Manager: manager, AuthenticateDevice: func(ctx context.Context, id, authorization string) bool {
-		return strings.HasPrefix(authorization, "Bearer ") && s.AuthenticateDevice(ctx, id, strings.TrimPrefix(authorization, "Bearer "))
-	}}
+	connectorHTTP := relay.ConnectorHandler{Registry: registry, Manager: manager, AuthenticateDevice: NewServer(s, OAuthConfig{PublicURL: "http://127.0.0.1:5173"}).AuthenticateConnector}
 	connectorServer := httptest.NewServer(connectorHTTP)
 	defer connectorServer.Close()
 	wsURL := "ws" + strings.TrimPrefix(connectorServer.URL, "http")

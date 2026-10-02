@@ -13,17 +13,18 @@ import (
 )
 
 type ConnectorHandler struct {
-	Registry           *devices.Registry
-	Manager            *Manager
-	DevToken           string
-	AuthenticateDevice func(context.Context, string, string) bool
+	Registry *devices.Registry
+	Manager  *Manager
+	DevToken string
+	// AuthenticateDevice returns the device ID proven by the request credential.
+	AuthenticateDevice func(*http.Request) (string, bool)
 }
 
 func (h ConnectorHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	authorizedID := ""
 	if h.AuthenticateDevice != nil {
-		authorizedID = r.Header.Get("X-Sinthmux-Device-ID")
-		if authorizedID == "" || !h.AuthenticateDevice(r.Context(), authorizedID, r.Header.Get("Authorization")) {
+		var ok bool
+		if authorizedID, ok = h.AuthenticateDevice(r); !ok || authorizedID == "" {
 			http.Error(w, "invalid device credential", http.StatusUnauthorized)
 			return
 		}

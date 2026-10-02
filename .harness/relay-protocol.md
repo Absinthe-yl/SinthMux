@@ -4,7 +4,7 @@
 
 | 通道 | 入口 | 认证 | 数据 |
 | --- | --- | --- | --- |
-| Connector → Hub | `/ws/v1/connectors/connect` | 正式模式：设备 ID + Bearer 设备令牌；开发模式：开发令牌 | JSON `protocol.Envelope`，包含 hello、heartbeat、RPC 和 stream 消息 |
+| Connector → Hub | `/ws/v1/connectors/connect` | 正式模式：设备证书 + nonce 签名（`X-Sinthmux-Device-*` 请求头），旧版设备令牌在首次证书连接前仍可用；开发模式：开发令牌 | JSON `protocol.Envelope`，包含 hello、heartbeat、RPC 和 stream 消息 |
 | Browser → Hub | `/ws/v1/terminal` | 45 秒、一次性票据；正式模式额外绑定 Web session 并复核权限 | 浏览器输入/输出为二进制帧，resize 为 JSON 文本帧 |
 
 ## 主要类型与实现

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/sinthmux/sinthmux/internal/devicecert"
 )
 
 var ErrDenied = errors.New("access denied")
@@ -82,6 +83,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS devices (id text PRIMARY KEY, space_id text NOT NULL REFERENCES spaces(id) ON DELETE CASCADE, name text NOT NULL, secret_hash bytea NOT NULL, revoked_at timestamptz, created_at timestamptz NOT NULL DEFAULT now())`,
 		`CREATE TABLE IF NOT EXISTS device_pairings (code_hash bytea PRIMARY KEY, space_id text NOT NULL REFERENCES spaces(id) ON DELETE CASCADE, name text NOT NULL, created_by text NOT NULL REFERENCES users(id), expires_at timestamptz NOT NULL, used_at timestamptz, created_at timestamptz NOT NULL DEFAULT now())`,
 		`CREATE TABLE IF NOT EXISTS audit_events (id bigserial PRIMARY KEY, actor_user_id text, space_id text, target text, action text NOT NULL, result text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`,
+		`CREATE TABLE IF NOT EXISTS device_authority (id int PRIMARY KEY CHECK (id = 1), certificate bytea NOT NULL, private_key bytea NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`,
+		`ALTER TABLE devices ADD COLUMN IF NOT EXISTS public_key_hash bytea`,
+		`ALTER TABLE devices ALTER COLUMN secret_hash DROP NOT NULL`,
 	}
 	for _, query := range statements {
 		if _, err := tx.ExecContext(ctx, query); err != nil {
@@ -419,7 +423,8 @@ func (s *Store) NewDevicePairing(ctx context.Context, spaceID, userID, name stri
 }
 
 // RedeemDevicePairing atomically consumes a pairing code and creates its device.
-func (s *Store) RedeemDevicePairing(ctx context.Context, code string) (Device, string, error) {
+// With a device key hash the device authenticates only by certificate proof and no token is returned.
+func (s *Store) RedeemDevicePairing(ctx context.Context, code string, keyHash []byte) (Device, string, error) {
 	if len(code) != 68 || !strings.HasPrefix(code, "smp_") {
 		return Device{}, "", ErrDenied
 	}
@@ -443,11 +448,16 @@ func (s *Store) RedeemDevicePairing(ctx context.Context, code string) (Device, s
 	if err != nil {
 		return Device{}, "", err
 	}
-	secret, err := Random()
-	if err != nil {
-		return Device{}, "", err
+	token := ""
+	var secretHash []byte
+	if keyHash == nil {
+		secret, err := Random()
+		if err != nil {
+			return Device{}, "", err
+		}
+		token, secretHash = "smd_"+device.ID+"_"+secret, digest(secret)
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO devices(id,space_id,name,secret_hash) VALUES($1,$2,$3,$4)`, device.ID, device.SpaceID, device.Name, digest(secret)); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO devices(id,space_id,name,secret_hash,public_key_hash) VALUES($1,$2,$3,$4,$5)`, device.ID, device.SpaceID, device.Name, secretHash, keyHash); err != nil {
 		return Device{}, "", err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE device_pairings SET used_at=now() WHERE code_hash=$1`, digest(code)); err != nil {
@@ -456,7 +466,7 @@ func (s *Store) RedeemDevicePairing(ctx context.Context, code string) (Device, s
 	if err = tx.Commit(); err != nil {
 		return Device{}, "", err
 	}
-	return device, "smd_" + device.ID + "_" + secret, nil
+	return device, token, nil
 }
 
 func (s *Store) AuthenticateDevice(ctx context.Context, deviceID, token string) bool {
@@ -465,10 +475,50 @@ func (s *Store) AuthenticateDevice(ctx context.Context, deviceID, token string) 
 		return false
 	}
 	var stored []byte
-	if s.DB.QueryRowContext(ctx, `SELECT secret_hash FROM devices WHERE id=$1 AND revoked_at IS NULL`, deviceID).Scan(&stored) != nil {
+	if s.DB.QueryRowContext(ctx, `SELECT secret_hash FROM devices WHERE id=$1 AND revoked_at IS NULL AND secret_hash IS NOT NULL`, deviceID).Scan(&stored) != nil {
 		return false
 	}
 	return matches(stored, parts[2])
+}
+
+// AuthenticateDeviceKey checks that a certified key is still the registered key of
+// an unrevoked device. The first success retires a legacy token, if one remains.
+func (s *Store) AuthenticateDeviceKey(ctx context.Context, spaceID, deviceID string, keyHash []byte) bool {
+	result, err := s.DB.ExecContext(ctx, `UPDATE devices SET secret_hash=NULL WHERE id=$1 AND space_id=$2 AND public_key_hash=$3 AND revoked_at IS NULL`, deviceID, spaceID, keyHash)
+	if err != nil {
+		return false
+	}
+	n, _ := result.RowsAffected()
+	return n == 1
+}
+
+// BindDeviceKey upgrades a token-authenticated device to a certified key. The token
+// keeps working until the key is first used, so a lost response does not lock out the device.
+func (s *Store) BindDeviceKey(ctx context.Context, deviceID, token string, keyHash []byte) (Device, error) {
+	if !s.AuthenticateDevice(ctx, deviceID, token) {
+		return Device{}, ErrDenied
+	}
+	device := Device{ID: deviceID}
+	err := s.DB.QueryRowContext(ctx, `UPDATE devices SET public_key_hash=$2 WHERE id=$1 AND revoked_at IS NULL AND secret_hash IS NOT NULL RETURNING space_id,name`, deviceID, keyHash).Scan(&device.SpaceID, &device.Name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Device{}, ErrDenied
+	}
+	return device, err
+}
+
+// DeviceAuthority loads the device CA, creating it on first use.
+func (s *Store) DeviceAuthority(ctx context.Context) (*devicecert.Authority, error) {
+	certificate, key, err := devicecert.NewAuthority()
+	if err != nil {
+		return nil, err
+	}
+	if _, err = s.DB.ExecContext(ctx, `INSERT INTO device_authority(id,certificate,private_key) VALUES(1,$1,$2) ON CONFLICT (id) DO NOTHING`, certificate, key); err != nil {
+		return nil, err
+	}
+	if err = s.DB.QueryRowContext(ctx, `SELECT certificate,private_key FROM device_authority WHERE id=1`).Scan(&certificate, &key); err != nil {
+		return nil, err
+	}
+	return devicecert.LoadAuthority(certificate, key)
 }
 
 func (s *Store) CreateSpace(ctx context.Context, userID, name string) (Space, error) {

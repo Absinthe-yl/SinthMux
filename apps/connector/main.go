@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"net/http"
 	"os"
 	"runtime"
 	"sync"
@@ -26,16 +25,20 @@ func main() {
 		return
 	}
 	settings := config.ConnectorFromEnv()
+	paired := false
 	if settings.DeviceToken == "" {
 		if saved, err := loadPairedConfig(); err == nil {
-			settings = saved
+			settings, paired = saved, true
 		}
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	backoff := time.Second
 
 	for {
-		if err := run(context.Background(), settings, logger); err != nil {
+		if paired {
+			refreshAndSave(&settings, logger)
+		}
+		if err := run(context.Background(), &settings, paired, logger); err != nil {
 			logger.Warn("connector disconnected", "error", err, "retryIn", backoff)
 			time.Sleep(backoff)
 			if backoff < 15*time.Second {
@@ -47,11 +50,38 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, settings config.Connector, logger *slog.Logger) error {
-	headers := http.Header{"Authorization": []string{"Bearer " + settings.DevToken}}
-	if settings.DeviceToken != "" {
-		headers.Set("Authorization", "Bearer "+settings.DeviceToken)
-		headers.Set("X-Sinthmux-Device-ID", settings.DeviceID)
+// refreshAndSave upgrades or renews the device certificate before connecting.
+// Failures keep the current credential so a Hub outage does not drop the device.
+func refreshAndSave(settings *config.Connector, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	next := *settings
+	changed, err := refreshCredential(ctx, &next)
+	if err != nil {
+		logger.Warn("device certificate refresh failed", "error", err)
+		return
+	}
+	if !changed {
+		return
+	}
+	path, err := pairedConfigPath()
+	if err == nil {
+		err = saveConfig(path, next)
+	}
+	if err != nil {
+		logger.Warn("device certificate not saved", "error", err)
+		return
+	}
+	*settings = next
+	logger.Info("device certificate updated", "deviceId", settings.DeviceID)
+}
+
+// run keeps one connector connection. Paired devices also check hourly whether
+// their certificate needs renewal, because a connection can outlive it.
+func run(ctx context.Context, settings *config.Connector, refresh bool, logger *slog.Logger) error {
+	headers, err := connectHeaders(ctx, *settings)
+	if err != nil {
+		return err
 	}
 	connection, _, err := websocket.Dial(ctx, settings.HubURL, &websocket.DialOptions{HTTPHeader: headers})
 	if err != nil {
@@ -112,10 +142,16 @@ func run(ctx context.Context, settings config.Connector, logger *slog.Logger) er
 
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
+	renewal := time.NewTicker(time.Hour)
+	defer renewal.Stop()
 	for {
 		select {
 		case err := <-readErrors:
 			return err
+		case <-renewal.C:
+			if refresh {
+				refreshAndSave(settings, logger)
+			}
 		case <-ticker.C:
 			if err := send(protocol.Envelope{Version: protocol.Version, Type: protocol.MessageHeartbeat, Heartbeat: &protocol.Heartbeat{DeviceID: settings.DeviceID, SentAt: time.Now().UTC()}}); err != nil {
 				return err

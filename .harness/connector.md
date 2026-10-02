@@ -2,16 +2,16 @@
 
 ## 生命周期
 
-`apps/connector/main.go` 有 `pair` 子命令和常驻连接模式。常驻模式先读环境变量；未设置设备令牌时尝试从用户配置目录的 `sinthmux/connector.json` 加载配对结果，也可通过 `SINTHMUX_CONNECTOR_CONFIG` 指定路径。连接失败会退避重试；连接后发送 hello，每 15 秒发送一次心跳。设备代理只主动连 Hub，不监听入站端口。
+`apps/connector/main.go` 有 `pair` 子命令和常驻连接模式。常驻模式先读环境变量；未设置设备令牌时尝试从用户配置目录的 `sinthmux/connector.json` 加载配对结果（设备私钥、证书，或旧版设备令牌），也可通过 `SINTHMUX_CONNECTOR_CONFIG` 指定路径。连接失败会退避重试；连接后发送 hello，每 15 秒发送一次心跳。设备代理只主动连 Hub，不监听入站端口。
 
 ## 设备接入
 
 1. Web 的“添加设备”请求 `POST /api/v1/spaces/{spaceId}/device-pairings`，获得 5 分钟、单次使用的配对码。
 2. 页面生成的命令下载 Hub 提供的 `install-connector.sh`；脚本按 macOS/Linux 和 CPU 架构下载二进制。
-3. `apps/connector/pair.go` 调用 `POST /api/v1/connectors/pair` 兑换设备 ID 与令牌，写入权限为 `0600` 的本机配置文件。安装脚本重跑或使用 `--repair` 时，仅对同一 Hub 复用已有凭据；换 Hub 时拒绝覆盖。
+3. `apps/connector/pair.go` 在本机生成 P-256 私钥和 CSR，调用 `POST /api/v1/connectors/pair` 兑换设备 ID 与 24 小时证书，写入权限为 `0600` 的本机配置文件；私钥不离开设备。安装脚本重跑或使用 `--repair` 时，仅对同一 Hub 复用已有凭据；换 Hub 时拒绝覆盖。
 4. 安装脚本在无 tmux 会话时创建 `sinthmux` 会话，并尝试用 systemd user service 或 LaunchAgent 托管；其他情况下以后台进程启动。后台服务保存 tmux 的绝对路径和 PATH，更新时重启服务，macOS 日志写入 `~/.config/sinthmux/connector.log`。
 
-入口文件是 `apps/hub/install-connector.sh`、`apps/connector/pair.go` 和 `internal/auth/http.go` / `store.go` 的配对方法。正式模式连接时使用设备 ID 请求头与 Bearer 设备令牌；本机开发模式使用 `SINTHMUX_DEV_TOKEN`。
+入口文件是 `apps/hub/install-connector.sh`、`apps/connector/pair.go` 和 `internal/auth/http.go` / `store.go` 的配对方法。正式模式连接前先取 `POST /api/v1/connectors/nonce`，再在握手头中带上证书和对 nonce 的签名（`apps/connector/credential.go`、`internal/devicecert`）。证书剩余不足 1/3 时用同一私钥续期（`POST /api/v1/connectors/certificate`），连接期间每小时检查一次；过期 30 天内仍可续期。旧版只有设备令牌的配置会在启动或 `--repair` 时自动换成证书。本机开发模式使用 `SINTHMUX_DEV_TOKEN`。
 
 ## tmux 与终端
 

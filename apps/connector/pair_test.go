@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/coder/websocket"
 )
 
 func TestPairSavesCredentialOnce(t *testing.T) {
@@ -14,12 +16,28 @@ func TestPairSavesCredentialOnce(t *testing.T) {
 	t.Setenv("SINTHMUX_CONNECTOR_CONFIG", path)
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ws/v1/connectors/connect" {
+			if r.Header.Get("Authorization") != "Bearer smd_device1_secret" || r.Header.Get("X-Sinthmux-Device-ID") != "device1" {
+				t.Errorf("credential check did not use saved device identity")
+			}
+			connection, err := websocket.Accept(w, r, nil)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			_ = connection.CloseNow()
+			return
+		}
+		if r.URL.Path == "/api/v1/connectors/certificate" {
+			http.NotFound(w, r)
+			return
+		}
 		requests++
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/connectors/pair" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		var body map[string]string
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["code"] != "smp_test" {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["code"] != "smp_test" || body["csr"] == "" {
 			t.Errorf("unexpected pairing body: %v %v", body, err)
 		}
 		w.WriteHeader(http.StatusCreated)
@@ -54,6 +72,72 @@ func TestPairSavesCredentialOnce(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Fatalf("pair requests=%d, want 1", requests)
+	}
+}
+
+func TestPairReplacesRevokedCredential(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "connector.json")
+	t.Setenv("SINTHMUX_CONNECTOR_CONFIG", path)
+	var old []byte
+	pairRequests := 0
+	credentialStatus := http.StatusUnauthorized
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ws/v1/connectors/connect" {
+			http.Error(w, "unavailable", credentialStatus)
+			return
+		}
+		if r.URL.Path == "/api/v1/connectors/certificate" {
+			http.NotFound(w, r)
+			return
+		}
+		pairRequests++
+		if r.URL.Path != "/api/v1/connectors/pair" || r.Method != http.MethodPost {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["code"] != "fresh_code" {
+			http.Error(w, "expired", http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]string{"deviceId": "new", "deviceToken": "smd_new_secret", "hubUrl": "ws://" + r.Host + "/ws/v1/connectors/connect", "name": "New"})
+	}))
+	defer server.Close()
+	old = []byte(`{"deviceId":"old","deviceToken":"smd_old_secret","hubUrl":"ws://` + server.Listener.Addr().String() + `/ws/v1/connectors/connect","name":"Old"}`)
+	if err := os.WriteFile(path, old, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := pair([]string{"--hub", server.URL, "--reuse-existing"}); err == nil {
+		t.Fatal("revoked credential was silently reused without pairing code")
+	}
+	if err := pair([]string{"--hub", server.URL, "--code", "expired_code", "--reuse-existing"}); err == nil {
+		t.Fatal("expired pairing code was accepted")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != string(old) {
+		t.Fatalf("old credential changed after rejected pairing: %v", err)
+	}
+	if err := pair([]string{"--hub", server.URL, "--code", "fresh_code", "--reuse-existing"}); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := loadPairedConfig()
+	if err != nil || saved.DeviceID != "new" || saved.DeviceToken != "smd_new_secret" {
+		t.Fatalf("replacement config: %+v %v", saved, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("replacement permissions: %v %v", info, err)
+	}
+	if pairRequests != 2 {
+		t.Fatalf("pair requests=%d, want 2", pairRequests)
+	}
+	credentialStatus = http.StatusServiceUnavailable
+	if err := pair([]string{"--hub", server.URL, "--code", "another_code", "--reuse-existing"}); err == nil {
+		t.Fatal("server failure was mistaken for a revoked credential")
+	}
+	if pairRequests != 2 {
+		t.Fatalf("server failure consumed a pairing code: requests=%d", pairRequests)
 	}
 }
 

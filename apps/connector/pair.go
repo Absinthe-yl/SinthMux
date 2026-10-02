@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -14,8 +16,28 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/sinthmux/sinthmux/internal/config"
+	"github.com/sinthmux/sinthmux/internal/devicecert"
 )
+
+func existingCredentialValid(saved config.Connector) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	headers, err := connectHeaders(ctx, saved)
+	if err != nil {
+		return false, fmt.Errorf("无法验证现有设备身份：%w", err)
+	}
+	connection, response, err := websocket.Dial(ctx, saved.HubURL, &websocket.DialOptions{HTTPHeader: headers})
+	if err == nil {
+		_ = connection.CloseNow()
+		return true, nil
+	}
+	if response != nil && response.StatusCode == http.StatusUnauthorized {
+		return false, nil
+	}
+	return false, fmt.Errorf("无法验证现有设备身份：%w", err)
+}
 
 func pairedConfigPath() (string, error) {
 	if path := os.Getenv("SINTHMUX_CONNECTOR_CONFIG"); path != "" {
@@ -41,7 +63,7 @@ func loadPairedConfig() (config.Connector, error) {
 	if err := json.Unmarshal(data, &saved); err != nil {
 		return config.Connector{}, err
 	}
-	if saved.DeviceID == "" || saved.DeviceToken == "" || saved.HubURL == "" {
+	if saved.DeviceID == "" || saved.HubURL == "" || (saved.DeviceToken == "" && (saved.DeviceKey == "" || saved.DeviceCertificate == "")) {
 		return config.Connector{}, errors.New("设备配置不完整")
 	}
 	return saved, nil
@@ -66,6 +88,7 @@ func pair(args []string) error {
 	if err != nil {
 		return err
 	}
+	replaceExisting := false
 	if _, err = os.Stat(path); err == nil {
 		if !*reuseExisting {
 			return fmt.Errorf("设备已有配置：%s；请先移走旧配置再配对", path)
@@ -82,26 +105,52 @@ func pair(args []string) error {
 		if parseErr != nil || savedHub.Scheme != expectedScheme || !strings.EqualFold(savedHub.Host, endpoint.Host) || savedHub.Path != "/ws/v1/connectors/connect" {
 			return fmt.Errorf("设备已配对到其他 Hub；原配置保留在 %s", path)
 		}
-		fmt.Printf("设备 %s 已配对到此 Hub，保留原设备身份并更新设备代理\n", saved.Name)
-		if *code != "" {
-			fmt.Println("提示：这次输入的配对码不会使用；本机仍显示为原设备。")
+		refreshCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		if changed, refreshErr := refreshCredential(refreshCtx, &saved); refreshErr == nil && changed {
+			if err := saveConfig(path, saved); err != nil {
+				cancel()
+				return err
+			}
 		}
-		return nil
+		cancel()
+		valid, checkErr := existingCredentialValid(saved)
+		if checkErr != nil {
+			return checkErr
+		}
+		if valid {
+			fmt.Printf("设备 %s 已配对到此 Hub，保留原设备身份并更新设备代理\n", saved.Name)
+			if *code != "" {
+				fmt.Println("提示：这次输入的配对码不会使用；本机仍显示为原设备。")
+			}
+			return nil
+		}
+		if *code == "" {
+			return errors.New("现有设备身份已在 Hub 失效，请在网页重新添加设备并运行新配对命令")
+		}
+		fmt.Println("现有设备身份已失效，正在使用新配对码重新接入")
+		replaceExisting = true
 	} else if !os.IsNotExist(err) {
 		return err
 	}
 	if *code == "" {
 		return errors.New("首次接入需要网页生成的一次性配对码")
 	}
-	requestBody, _ := json.Marshal(map[string]string{"code": *code})
+	key, err := devicecert.NewKey()
+	if err != nil {
+		return err
+	}
+	csr, err := devicecert.Request(key)
+	if err != nil {
+		return err
+	}
+	requestBody, _ := json.Marshal(map[string]string{"code": *code, "csr": base64.RawURLEncoding.EncodeToString(csr)})
 	endpoint.Path = "/api/v1/connectors/pair"
 	request, err := http.NewRequest(http.MethodPost, endpoint.String(), bytes.NewReader(requestBody))
 	if err != nil {
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Do(request)
+	response, err := httpClient.Do(request)
 	if err != nil {
 		return err
 	}
@@ -109,30 +158,69 @@ func pair(args []string) error {
 	if response.StatusCode != http.StatusCreated {
 		return fmt.Errorf("Hub 拒绝配对（HTTP %d），请重新生成配对命令", response.StatusCode)
 	}
-	var paired struct{ DeviceID, DeviceToken, HubURL, Name string }
-	if err := json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&paired); err != nil {
+	var paired struct{ DeviceID, DeviceToken, Certificate, HubURL, Name string }
+	if err := json.NewDecoder(io.LimitReader(response.Body, 8192)).Decode(&paired); err != nil {
 		return err
 	}
-	if paired.DeviceID == "" || !strings.HasPrefix(paired.DeviceToken, "smd_"+paired.DeviceID+"_") || paired.HubURL == "" {
+	if paired.DeviceID == "" || paired.HubURL == "" {
 		return errors.New("Hub 返回的设备配置无效")
 	}
-	saved := config.Connector{DeviceID: paired.DeviceID, DeviceToken: paired.DeviceToken, HubURL: paired.HubURL, Name: paired.Name}
+	saved := config.Connector{DeviceID: paired.DeviceID, HubURL: paired.HubURL, Name: paired.Name}
+	if paired.Certificate != "" {
+		certificate, err := base64.RawURLEncoding.DecodeString(paired.Certificate)
+		if err != nil || acceptCertificate(&saved, key, certificate) != nil {
+			return errors.New("Hub 返回的设备证书无效")
+		}
+	} else if strings.HasPrefix(paired.DeviceToken, "smd_"+paired.DeviceID+"_") {
+		saved.DeviceToken = paired.DeviceToken
+	} else {
+		return errors.New("Hub 返回的设备配置无效")
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if replaceExisting {
+		if err := saveConfig(path, saved); err != nil {
+			return err
+		}
+	} else {
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			return err
+		}
+		if err := writeConfig(file, saved); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("设备 %s 已配对，配置保存在 %s\n", paired.Name, path)
+	return nil
+}
+
+// saveConfig replaces the device config atomically with owner-only permissions.
+func saveConfig(path string, saved config.Connector) error {
+	file, err := os.CreateTemp(filepath.Dir(path), ".connector-*.json")
 	if err != nil {
 		return err
 	}
+	if err := writeConfig(file, saved); err != nil {
+		return err
+	}
+	if err := os.Rename(file.Name(), path); err != nil {
+		os.Remove(file.Name())
+		return err
+	}
+	return nil
+}
+
+func writeConfig(file *os.File, saved config.Connector) error {
 	if err := json.NewEncoder(file).Encode(saved); err != nil {
 		file.Close()
-		os.Remove(path)
+		os.Remove(file.Name())
 		return err
 	}
 	if err := file.Close(); err != nil {
-		os.Remove(path)
+		os.Remove(file.Name())
 		return err
 	}
-	fmt.Printf("设备 %s 已配对，配置保存在 %s\n", paired.Name, path)
 	return nil
 }

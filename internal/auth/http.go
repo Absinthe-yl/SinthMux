@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -16,11 +17,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/sinthmux/sinthmux/internal/devicecert"
 )
 
 const cookieName = "sinthmux_session"
 
-type OAuthConfig struct{ ClientID, ClientSecret, PublicURL, AuthorizeURL, TokenURL, UserURL, BrokerURL, BrokerPublicKey string }
+type OAuthConfig struct{ ClientID, ClientSecret, PublicURL, LANOrigin, AuthorizeURL, TokenURL, UserURL, BrokerURL, BrokerPublicKey string }
 type OAuthState struct {
 	Verifier string
 	Expires  time.Time
@@ -29,9 +31,11 @@ type Server struct {
 	Store           *Store
 	OAuth           OAuthConfig
 	OnDeviceRevoked func(string)
+	Authority       *devicecert.Authority
 	mu              sync.Mutex
 	states          map[string]OAuthState
 	attempts        map[string][]time.Time
+	nonces          map[string]time.Time
 }
 
 type contextKey int
@@ -48,7 +52,7 @@ func NewServer(store *Store, oauth OAuthConfig) *Server {
 	if oauth.UserURL == "" {
 		oauth.UserURL = "https://api.github.com/user"
 	}
-	return &Server{Store: store, OAuth: oauth, states: map[string]OAuthState{}, attempts: map[string][]time.Time{}}
+	return &Server{Store: store, OAuth: oauth, states: map[string]OAuthState{}, attempts: map[string][]time.Time{}, nonces: map[string]time.Time{}}
 }
 func (s *Server) BrokerEnabled() bool {
 	key, err := base64.RawURLEncoding.DecodeString(s.OAuth.BrokerPublicKey)
@@ -82,6 +86,9 @@ func readBody(w http.ResponseWriter, r *http.Request, out any) bool {
 func (s *Server) originAllowed(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
+		return true
+	}
+	if s.OAuth.LANOrigin != "" && origin == s.OAuth.LANOrigin {
 		return true
 	}
 	public, err := url.Parse(s.OAuth.PublicURL)
@@ -140,6 +147,8 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/api/v1/auth/github/broker/callback", s.brokerCallback)
 	r.Post("/api/v1/auth/token", s.tokenLogin)
 	r.Post("/api/v1/connectors/pair", s.redeemDevicePairing)
+	r.Post("/api/v1/connectors/nonce", s.deviceNonce)
+	r.Post("/api/v1/connectors/certificate", s.renewDeviceCertificate)
 	r.Group(func(r chi.Router) {
 		r.Use(s.Require)
 		r.Get("/api/v1/auth/me", s.me)
@@ -556,11 +565,22 @@ func (s *Server) redeemDevicePairing(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Code string `json:"code"`
+		CSR  string `json:"csr,omitempty"`
 	}
 	if !readBody(w, r, &body) {
 		return
 	}
-	device, token, err := s.Store.RedeemDevicePairing(r.Context(), body.Code)
+	var keyHash []byte
+	var public *ecdsa.PublicKey
+	if body.CSR != "" {
+		var err error
+		if public, err = csrKey(body.CSR); err != nil || s.Authority == nil {
+			respond(w, 400, map[string]string{"error": "invalid certificate request"})
+			return
+		}
+		keyHash = devicecert.KeyHash(public)
+	}
+	device, token, err := s.Store.RedeemDevicePairing(r.Context(), body.Code, keyHash)
 	if err != nil {
 		if errors.Is(err, ErrDenied) {
 			respond(w, 401, map[string]string{"error": "invalid or expired pairing code"})
@@ -569,21 +589,32 @@ func (s *Server) redeemDevicePairing(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	public, err := url.Parse(s.OAuth.PublicURL)
+	hubURL, err := url.Parse(s.OAuth.PublicURL)
 	if err != nil {
 		respond(w, 500, map[string]string{"error": "invalid public URL"})
 		return
 	}
-	if public.Scheme == "https" {
-		public.Scheme = "wss"
+	if hubURL.Scheme == "https" {
+		hubURL.Scheme = "wss"
 	} else {
-		public.Scheme = "ws"
+		hubURL.Scheme = "ws"
 	}
-	public.Path = "/ws/v1/connectors/connect"
-	public.RawQuery = ""
+	hubURL.Path = "/ws/v1/connectors/connect"
+	hubURL.RawQuery = ""
+	result := map[string]string{"deviceId": device.ID, "hubUrl": hubURL.String(), "name": device.Name}
+	if public != nil {
+		certificate, err := s.Authority.Issue(public, device.SpaceID, device.ID, time.Now())
+		if err != nil {
+			respond(w, 500, map[string]string{"error": "certificate unavailable"})
+			return
+		}
+		result["certificate"] = base64.RawURLEncoding.EncodeToString(certificate)
+	} else {
+		result["deviceToken"] = token
+	}
 	s.Store.Audit(r.Context(), "", device.SpaceID, device.ID, "device.pairing.redeem", "ok")
 	w.Header().Set("Cache-Control", "no-store")
-	respond(w, 201, map[string]string{"deviceId": device.ID, "deviceToken": token, "hubUrl": public.String(), "name": device.Name})
+	respond(w, 201, result)
 }
 
 func (s *Server) githubStart(w http.ResponseWriter, r *http.Request) {
