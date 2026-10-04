@@ -406,3 +406,134 @@ func TestFormalStoreIntegration(t *testing.T) {
 		t.Fatalf("OAuth state replay=%d", replayed.Code)
 	}
 }
+
+func TestDeleteSpaceIntegration(t *testing.T) {
+	dsn := os.Getenv("SINTHMUX_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("set SINTHMUX_TEST_DATABASE_URL to run PostgreSQL integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	s, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	owner, err := s.GithubUser(ctx, time.Now().UnixNano(), "space-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spaces, _ := s.Spaces(ctx, owner.ID)
+	personal := spaces[0].ID
+	team, err := s.CreateSpace(ctx, owner.ID, "to-delete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, deviceToken, err := s.NewDevice(ctx, team.ID, "team-device")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.NewDevicePairing(ctx, team.ID, owner.ID, "pending"); err != nil {
+		t.Fatal(err)
+	}
+	member, err := s.AddMember(ctx, team.ID, "operator", "operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	revoked := []string{}
+	server := NewServer(s, OAuthConfig{PublicURL: "http://127.0.0.1:5173"})
+	server.OnDeviceRevoked = func(id string) { revoked = append(revoked, id) }
+	router := chi.NewRouter()
+	server.Mount(router)
+	call := func(userID, spaceID string) int {
+		secret, _, err := s.NewSession(ctx, userID, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		session, _ := s.Session(ctx, secret)
+		request := httptest.NewRequest(http.MethodDelete, "/api/v1/spaces/"+spaceID, nil)
+		request.AddCookie(&http.Cookie{Name: cookieName, Value: secret})
+		request.Header.Set("Origin", "http://127.0.0.1:5173")
+		request.Header.Set("X-Sinthmux-CSRF", session.CSRF)
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		return recorder.Code
+	}
+
+	if code := call(member.ID, team.ID); code != http.StatusForbidden {
+		t.Fatalf("non-owner delete: %d", code)
+	}
+	if code := call(owner.ID, personal); code != http.StatusConflict {
+		t.Fatalf("personal space delete: %d", code)
+	}
+	if code := call(owner.ID, team.ID); code != http.StatusNoContent {
+		t.Fatalf("owner delete: %d", code)
+	}
+	if len(revoked) != 1 || revoked[0] != device.ID {
+		t.Fatalf("devices disconnected: %v", revoked)
+	}
+	if s.AuthenticateDevice(ctx, device.ID, deviceToken) {
+		t.Fatal("device of a deleted space still authenticates")
+	}
+	var left int
+	_ = s.DB.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM memberships WHERE space_id=$1)+(SELECT count(*) FROM devices WHERE space_id=$1)+(SELECT count(*) FROM device_pairings WHERE space_id=$1)`, team.ID).Scan(&left)
+	if left != 0 {
+		t.Fatalf("rows left after delete: %d", left)
+	}
+	if code := call(owner.ID, team.ID); code != http.StatusNotFound {
+		t.Fatalf("second delete: %d", code)
+	}
+	after, _ := s.Spaces(ctx, owner.ID)
+	if len(after) != 1 || after[0].ID != personal {
+		t.Fatalf("spaces after delete: %+v", after)
+	}
+}
+
+func TestRecoveryTokenIntegration(t *testing.T) {
+	dsn := os.Getenv("SINTHMUX_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("set SINTHMUX_TEST_DATABASE_URL to run PostgreSQL integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	s, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	user, err := s.GithubUser(ctx, time.Now().UnixNano(), "lost-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := s.NewToken(ctx, user.ID, "old", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := s.RecoveryToken(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _, err := s.TokenUser(ctx, token); err != nil || got.ID != user.ID {
+		t.Fatalf("recovery token login: %+v %v", got, err)
+	}
+	if _, _, err := s.TokenUser(ctx, old); err != nil {
+		t.Fatal("recovery revoked the user's existing token")
+	}
+	var hours float64
+	_ = s.DB.QueryRowContext(ctx, `SELECT extract(epoch from expires_at-now())/3600 FROM login_tokens WHERE user_id=$1 AND name='恢复令牌'`, user.ID).Scan(&hours)
+	if hours < 23 || hours > 24.1 {
+		t.Fatalf("recovery token lifetime %.1fh", hours)
+	}
+	if _, err := s.RecoveryToken(ctx, "no-such-user"); err == nil {
+		t.Fatal("recovery token issued for a missing user")
+	}
+	users, err := s.Users(ctx)
+	found := false
+	for _, u := range users {
+		found = found || u["id"] == user.ID
+	}
+	if err != nil || !found {
+		t.Fatalf("user list: %v %v", found, err)
+	}
+}

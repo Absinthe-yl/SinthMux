@@ -10,6 +10,8 @@ Hub 只有在 `SINTHMUX_DATABASE_URL` 非空时才创建 `auth.Server`。`intern
 | --- | --- |
 | 用户、个人/团队空间、成员角色 | `internal/auth/store.go`；HTTP 入口在 `internal/auth/http.go` |
 | 初始 Owner 令牌 | `apps/hub/main.go` 的 `bootstrap-token` 命令；`Store.BootstrapOwner`，首次数据库初始化使用 |
+| 恢复令牌 | `apps/hub/recovery.go` 的 `recovery-token [用户ID]` 命令（`scripts/recovery-token.sh` 包装 docker compose exec）；`Store.Users`、`Store.RecoveryToken` 为已有用户签发 24 小时令牌，不动其他凭据，写审计 `auth.recovery_token` |
+| 删除空间 | `DELETE /api/v1/spaces/{id}`：`Server.deleteSpace` 仅 owner、仅团队空间（个人空间返回 409）；`Store.DeleteSpace` 事务内删除，成员/设备/配对码依赖 `ON DELETE CASCADE`，随后对每台设备调用 `OnDeviceRevoked` 断开在线连接 |
 | 用户令牌、Web session 与 Cookie | `Store.NewToken`、`NewSession`、`Session`；`Server.Require`、`tokenLogin` |
 | 设备、一次性配对码、撤销 | `Store.NewDevicePairing`、`RedeemDevicePairing`、`AuthenticateDevice`、`RevokeDevice` |
 | 设备 CA、证书签发与持有证明 | `internal/devicecert`；`Store.DeviceAuthority`、`AuthenticateDeviceKey`、`BindDeviceKey`；HTTP 入口在 `internal/auth/device_proof.go` |

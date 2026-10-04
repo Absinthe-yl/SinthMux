@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -158,6 +159,7 @@ func (s *Server) Mount(r chi.Router) {
 		r.Delete("/api/v1/auth/tokens/{tokenId}", s.revokeToken)
 		r.Get("/api/v1/spaces", s.spaces)
 		r.Post("/api/v1/spaces", s.createSpace)
+		r.Delete("/api/v1/spaces/{spaceId}", s.deleteSpace)
 		r.Post("/api/v1/spaces/{spaceId}/members", s.addMember)
 		r.Get("/api/v1/spaces/{spaceId}/members", s.members)
 		r.Patch("/api/v1/spaces/{spaceId}/members/{userId}", s.changeMember)
@@ -332,6 +334,36 @@ func (s *Server) createSpace(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Store.Audit(r.Context(), session.User.ID, space.ID, space.ID, "space.create", "ok")
 	respond(w, 201, space)
+}
+
+func (s *Server) deleteSpace(w http.ResponseWriter, r *http.Request) {
+	session, _ := FromContext(r.Context())
+	spaceID := chi.URLParam(r, "spaceId")
+	role, err := s.Store.Role(r.Context(), session.User.ID, spaceID)
+	if err != nil {
+		respond(w, 404, map[string]string{"error": "space not found"})
+		return
+	}
+	if !Allowed(role, "space") {
+		respond(w, 403, map[string]string{"error": "only the space owner can delete it"})
+		return
+	}
+	devices, err := s.Store.DeleteSpace(r.Context(), spaceID)
+	if errors.Is(err, ErrPersonalSpace) {
+		respond(w, 409, map[string]string{"error": "personal space cannot be deleted"})
+		return
+	}
+	if err != nil {
+		respond(w, 404, map[string]string{"error": "space not found"})
+		return
+	}
+	for _, id := range devices {
+		if s.OnDeviceRevoked != nil {
+			s.OnDeviceRevoked(id)
+		}
+	}
+	s.Store.Audit(r.Context(), session.User.ID, "", spaceID, "space.delete", fmt.Sprintf("ok devices=%d", len(devices)))
+	w.WriteHeader(204)
 }
 
 func (s *Server) auditEvents(w http.ResponseWriter, r *http.Request) {

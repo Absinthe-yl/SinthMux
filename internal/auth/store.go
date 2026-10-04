@@ -17,6 +17,9 @@ import (
 
 var ErrDenied = errors.New("access denied")
 
+// ErrPersonalSpace is returned when deleting a user's own personal space.
+var ErrPersonalSpace = errors.New("personal space cannot be deleted")
+
 type Store struct{ DB *sql.DB }
 
 type User struct {
@@ -305,6 +308,35 @@ func (s *Store) BootstrapOwner(ctx context.Context, name string) (string, error)
 		return "", err
 	}
 	return "smt_" + tokenID + "_" + secret, nil
+}
+
+// Users lists active users with the spaces they own, for the recovery-token
+// command run by whoever operates the Hub.
+func (s *Store) Users(ctx context.Context) ([]map[string]string, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT u.id,u.name,coalesce(u.github_id::text,''),coalesce(string_agg(sp.name, ', ' ORDER BY sp.name),'') FROM users u LEFT JOIN spaces sp ON sp.owner_user_id=u.id WHERE u.status='active' GROUP BY u.id,u.name,u.github_id,u.created_at ORDER BY u.created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var users []map[string]string
+	for rows.Next() {
+		var id, name, github, spaces string
+		if err := rows.Scan(&id, &name, &github, &spaces); err != nil {
+			return nil, err
+		}
+		users = append(users, map[string]string{"id": id, "name": name, "github": github, "spaces": spaces})
+	}
+	return users, rows.Err()
+}
+
+// RecoveryToken issues a short-lived login token for an existing user who lost
+// all of theirs. Only someone with access to the Hub's database can call it.
+func (s *Store) RecoveryToken(ctx context.Context, userID string) (string, error) {
+	var status string
+	if err := s.DB.QueryRowContext(ctx, `SELECT status FROM users WHERE id=$1`, userID).Scan(&status); err != nil || status != "active" {
+		return "", ErrDenied
+	}
+	return s.NewToken(ctx, userID, "恢复令牌", 24*time.Hour)
 }
 
 func (s *Store) Tokens(ctx context.Context, userID string) ([]map[string]any, error) {
@@ -629,6 +661,46 @@ func (s *Store) RemoveMember(ctx context.Context, spaceID, userID string) error 
 		return ErrDenied
 	}
 	return nil
+}
+
+// DeleteSpace removes a team space and, through ON DELETE CASCADE, its
+// memberships, devices and pending pairings. Personal spaces cannot be
+// deleted. It returns the IDs of devices that were in the space so the caller
+// can disconnect them.
+func (s *Store) DeleteSpace(ctx context.Context, spaceID string) ([]string, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var kind string
+	if err := tx.QueryRowContext(ctx, `SELECT kind FROM spaces WHERE id=$1 FOR UPDATE`, spaceID).Scan(&kind); err != nil {
+		return nil, ErrDenied
+	}
+	if kind != "team" {
+		return nil, ErrPersonalSpace
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM devices WHERE space_id=$1`, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	var devices []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		devices = append(devices, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM spaces WHERE id=$1`, spaceID); err != nil {
+		return nil, err
+	}
+	return devices, tx.Commit()
 }
 
 func (s *Store) RevokeDevice(ctx context.Context, spaceID, deviceID string) error {

@@ -4,6 +4,7 @@ import "@xterm/xterm/css/xterm.css";
 import { ArrowLeft, CornerDownLeft, Keyboard, Maximize2, Minus, Plus } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type PointerEvent } from "react";
 import { APIError, request } from "./api";
+import { attachMobileInput } from "./mobileInput";
 import { consumeModifiers, keySequence, modifyText, nextModifier, noModifiers, type Modifiers, type SpecialKey } from "./terminalKeys";
 
 // Phones and tablets: touch input, or a narrow screen where a hardware keyboard is unlikely.
@@ -19,32 +20,58 @@ function savedFontSize() {
 // Buttons in the key bar must not take focus, or the phone keyboard closes.
 const keepFocus = (event: PointerEvent) => event.preventDefault();
 
-const specialKeys: { label: string; key: SpecialKey; title: string }[] = [
-  { label: "Esc", key: "Escape", title: "Esc" },
-  { label: "Tab", key: "Tab", title: "Tab 补全" },
-  { label: "↑", key: "Up", title: "上一条命令" },
-  { label: "↓", key: "Down", title: "下一条命令" },
-  { label: "←", key: "Left", title: "左移" },
-  { label: "→", key: "Right", title: "右移" },
-  { label: "Home", key: "Home", title: "行首" },
-  { label: "End", key: "End", title: "行尾" },
-  { label: "PgUp", key: "PageUp", title: "上翻页" },
-  { label: "PgDn", key: "PageDown", title: "下翻页" }
-];
+// Key bar. Every key here was checked against bash (--norc) and zsh (-f) in
+// tmux: it either does what its label says in a stock shell, or is a key that
+// full-screen programs (vim, less, htop, Claude Code / Codex prompts) need and
+// phones cannot type. Keys that only work with custom shell bindings (Home,
+// PgUp/PgDn, Delete, Ctrl+←/→) were dropped from the line-editing rows; Ctrl/Alt
+// plus the soft keyboard covers the rest (e.g. Ctrl then "w").
+type BarKey = { label: string; title: string } & ({ key: SpecialKey } | { data: string } | { text: string });
 
-const shortcuts: { label: string; data: string; title: string }[] = [
-  { label: "^C", data: "\x03", title: "Ctrl+C 中断" },
-  { label: "^D", data: "\x04", title: "Ctrl+D 退出" },
-  { label: "^Z", data: "\x1a", title: "Ctrl+Z 挂起" },
-  { label: "^L", data: "\x0c", title: "Ctrl+L 清屏" },
-  { label: "^R", data: "\x12", title: "Ctrl+R 搜索历史" },
-  { label: "^A", data: "\x01", title: "Ctrl+A 行首" },
-  { label: "^E", data: "\x05", title: "Ctrl+E 行尾" },
-  { label: "^U", data: "\x15", title: "Ctrl+U 删除到行首" },
-  { label: "tmux", data: "\x02", title: "tmux 前缀 Ctrl+B" }
+const keyGroups: { id: string; label: string; keys: BarKey[] }[] = [
+  { id: "edit", label: "常用", keys: [
+    { label: "Esc", key: "Escape", title: "Esc：退出 vim 插入模式、关闭补全菜单" },
+    { label: "Tab", key: "Tab", title: "Tab：补全命令和路径" },
+    { label: "↑", key: "Up", title: "↑：上一条命令" },
+    { label: "↓", key: "Down", title: "↓：下一条命令" },
+    { label: "←", key: "Left", title: "←：光标左移" },
+    { label: "→", key: "Right", title: "→：光标右移" },
+    { label: "^C", data: "\x03", title: "Ctrl+C：中断正在运行的程序" },
+    { label: "^R", data: "\x12", title: "Ctrl+R：搜索历史命令" },
+    { label: "^A", data: "\x01", title: "Ctrl+A：跳到行首" },
+    { label: "^E", data: "\x05", title: "Ctrl+E：跳到行尾" },
+    { label: "^W", data: "\x17", title: "Ctrl+W：删除前一个词" },
+    { label: "^U", data: "\x15", title: "Ctrl+U：删除到行首" },
+    { label: "^K", data: "\x0b", title: "Ctrl+K：删除到行尾" },
+    { label: "⌥B", data: "\x1bb", title: "Alt+B：后退一个词" },
+    { label: "⌥F", data: "\x1bf", title: "Alt+F：前进一个词" },
+    { label: "⌥.", data: "\x1b.", title: "Alt+.：插入上一条命令的最后一个参数" },
+    { label: "^L", data: "\x0c", title: "Ctrl+L：清屏" },
+    { label: "^D", data: "\x04", title: "Ctrl+D：退出（空行时）" },
+    { label: "^Z", data: "\x1a", title: "Ctrl+Z：挂起到后台，fg 恢复" }
+  ] },
+  { id: "symbols", label: "符号", keys: [..."|~/-_*&;<>$`'\"\\{}[]()#!=%^@:?"].map((text) => ({ label: text, text, title: `输入 ${text}` })) },
+  { id: "tmux", label: "tmux", keys: [
+    { label: "前缀", data: "\x02", title: "Ctrl+B：tmux 前缀键，之后再按一个键" },
+    { label: "滚动", data: "\x02[", title: "进入复制/滚动模式，用 ↑↓ 或 PgUp/PgDn 查看历史输出，q 退出" },
+    { label: "PgUp", key: "PageUp", title: "PgUp：上翻一页（tmux 滚动模式、less、vim）" },
+    { label: "PgDn", key: "PageDown", title: "PgDn：下翻一页" },
+    { label: "新窗口", data: "\x02c", title: "Ctrl+B c：新建窗口" },
+    { label: "下一窗", data: "\x02n", title: "Ctrl+B n：切到下一个窗口" },
+    { label: "上一窗", data: "\x02p", title: "Ctrl+B p：切到上一个窗口" },
+    { label: "左右分屏", data: "\x02%", title: "Ctrl+B %：左右分屏" },
+    { label: "上下分屏", data: "\x02\"", title: "Ctrl+B \"：上下分屏" },
+    { label: "切窗格", data: "\x02o", title: "Ctrl+B o：切到下一个窗格" },
+    { label: "放大", data: "\x02z", title: "Ctrl+B z：放大/还原当前窗格" },
+    { label: "q", text: "q", title: "q：退出滚动模式、less、man" }
+  ] },
+  { id: "keys", label: "功能键", keys: [
+    { label: "Home", key: "Home", title: "Home（vim、less 中有效）" },
+    { label: "End", key: "End", title: "End" },
+    { label: "Del", key: "Delete", title: "Delete：删除光标后的字符（vim 等）" },
+    ...(["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12"] as const).map((key) => ({ label: key, key, title: `${key}（htop、mc 等程序使用）` }))
+  ] }
 ];
-
-const symbols = ["|", "~", "/", "-", "_", "*", "&", ";", ">", "$", "`"];
 
 export default function TerminalView({ deviceId, deviceName, session, theme, onBack }: { deviceId: string; deviceName: string; session: string; theme: "light" | "dark"; onBack: () => void }) {
   const host = useRef<HTMLDivElement>(null);
@@ -58,6 +85,8 @@ export default function TerminalView({ deviceId, deviceName, session, theme, onB
   const [mods, setModsState] = useState<Modifiers>(noModifiers);
   const [fontSize, setFontSize] = useState(savedFontSize);
   const [command, setCommand] = useState("");
+  const [keyGroup, setKeyGroup] = useState(() => localStorage.getItem("sinthmux-key-group") ?? "edit");
+  useEffect(() => { localStorage.setItem("sinthmux-key-group", keyGroup); }, [keyGroup]);
 
   const setMods = (next: Modifiers) => { modsRef.current = next; setModsState(next); };
 
@@ -108,6 +137,7 @@ export default function TerminalView({ deviceId, deviceName, session, theme, onB
     textarea?.setAttribute("autocapitalize", "off");
     textarea?.setAttribute("autocorrect", "off");
     textarea?.setAttribute("spellcheck", "false");
+    let detachMobileInput = () => {};
     let socket: WebSocket | undefined;
     let disposed = false;
     let connecting = false;
@@ -125,13 +155,20 @@ export default function TerminalView({ deviceId, deviceName, session, theme, onB
     fitRef.current = resize;
     const observer = new ResizeObserver(resize);
     observer.observe(host.current);
-    const onInput = term.onData((input) => {
-      // Ctrl/Alt from the key bar apply to the next typed character.
+    // Ctrl/Alt from the key bar apply to the next typed character.
+    const typed = (input: string) => {
       const current = modsRef.current;
       const output = modifyText(input, current);
       if (output !== input) setMods(consumeModifiers(current));
       send(output);
-    });
+    };
+    const onInput = term.onData(typed);
+    if (touchDevice && textarea) {
+      detachMobileInput = attachMobileInput(host.current, textarea, {
+        onText: (text) => { for (const char of text) typed(char); term.scrollToBottom(); },
+        onKey: (sequence) => { send(sequence); term.scrollToBottom(); }
+      });
+    }
     const scheduleRetry = () => {
       if (disposed || retryTimer) return;
       const delay = Math.min(1000 * 2 ** retryCount, 10000);
@@ -191,7 +228,7 @@ export default function TerminalView({ deviceId, deviceName, session, theme, onB
     };
     window.addEventListener("online", reconnectNow);
     void connect();
-    return () => { disposed = true; abort.abort(); if (retryTimer) clearTimeout(retryTimer); window.removeEventListener("online", reconnectNow); socket?.close(); observer.disconnect(); onInput.dispose(); sendRef.current = () => {}; fitRef.current = () => {}; terminal.current = null; term.dispose(); };
+    return () => { disposed = true; abort.abort(); if (retryTimer) clearTimeout(retryTimer); window.removeEventListener("online", reconnectNow); socket?.close(); observer.disconnect(); onInput.dispose(); detachMobileInput(); sendRef.current = () => {}; fitRef.current = () => {}; terminal.current = null; term.dispose(); };
   }, [deviceId, session]);
 
   const pressKey = (key: SpecialKey) => {
@@ -201,6 +238,11 @@ export default function TerminalView({ deviceId, deviceName, session, theme, onB
   const pressText = (text: string) => {
     sendRef.current(modifyText(text, modsRef.current));
     setMods(consumeModifiers(modsRef.current));
+  };
+  const pressBarKey = (item: BarKey) => {
+    if ("key" in item) pressKey(item.key);
+    else if ("text" in item) pressText(item.text);
+    else { sendRef.current(item.data); setMods(noModifiers); }
   };
   const toggle = (name: keyof Modifiers) => setMods({ ...modsRef.current, [name]: nextModifier(modsRef.current[name]) });
   const sendCommand = (event: FormEvent) => {
@@ -225,13 +267,13 @@ export default function TerminalView({ deviceId, deviceName, session, theme, onB
     </div>
     <div className="terminal-surface" ref={host} />
     {showKeys && <div className="terminal-keys" role="toolbar" aria-label="终端快捷键">
-      <div className="key-row">
-        {(["ctrl", "alt"] as const).map((name) => <button key={name} type="button" className={`key modifier ${mods[name]}`} title={`${name === "ctrl" ? "Ctrl" : "Alt"}：点一次作用于下一个键，点两次锁定`} aria-label={`${name === "ctrl" ? "Ctrl" : "Alt"}，${modifierLabel(name)}`} onPointerDown={keepFocus} onClick={() => toggle(name)}>{name === "ctrl" ? "Ctrl" : "Alt"}</button>)}
-        {specialKeys.map((item) => <button key={item.key} type="button" className="key" title={item.title} aria-label={item.title} onPointerDown={keepFocus} onClick={() => pressKey(item.key)}>{item.label}</button>)}
+      <div className="key-tabs" role="tablist" aria-label="按键分组">
+        {keyGroups.map((group) => <button key={group.id} type="button" role="tab" aria-selected={keyGroup === group.id} className={keyGroup === group.id ? "active" : ""} onPointerDown={keepFocus} onClick={() => setKeyGroup(group.id)}>{group.label}</button>)}
       </div>
       <div className="key-row">
-        {shortcuts.map((item) => <button key={item.label} type="button" className="key shortcut" title={item.title} aria-label={item.title} onPointerDown={keepFocus} onClick={() => { sendRef.current(item.data); setMods(noModifiers); }}>{item.label}</button>)}
-        {symbols.map((symbol) => <button key={symbol} type="button" className="key" aria-label={`输入 ${symbol}`} onPointerDown={keepFocus} onClick={() => pressText(symbol)}>{symbol}</button>)}
+        {(["ctrl", "alt"] as const).map((name) => <button key={name} type="button" className={`key modifier ${mods[name]}`} title={`${name === "ctrl" ? "Ctrl" : "Alt"}：点一次作用于下一个键（可配合手机键盘字母），点两次锁定`} aria-label={`${name === "ctrl" ? "Ctrl" : "Alt"}，${modifierLabel(name)}`} onPointerDown={keepFocus} onClick={() => toggle(name)}>{name === "ctrl" ? "Ctrl" : "Alt"}</button>)}
+        <span className="key-divider" aria-hidden="true" />
+        {(keyGroups.find((group) => group.id === keyGroup) ?? keyGroups[0]).keys.map((item) => <button key={item.label} type="button" className={`key${"data" in item ? " shortcut" : ""}`} title={item.title} aria-label={item.title} onPointerDown={keepFocus} onClick={() => pressBarKey(item)}>{item.label}</button>)}
       </div>
       <form className="command-line" onSubmit={sendCommand}>
         <input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="输入命令，回车发送（可用输入法和粘贴）" aria-label="输入命令" autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false} enterKeyHint="send" />

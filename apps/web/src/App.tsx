@@ -48,7 +48,9 @@ type DialogAction =
   | { kind: "create-token" | "create-space" | "create-device" | "add-member" | "add-github-member" }
   | { kind: "change-role" | "remove-member"; member: Member }
   | { kind: "revoke-token"; token: LoginToken }
-  | { kind: "revoke-device"; device: Device };
+  | { kind: "revoke-device"; device: Device }
+  | { kind: "delete-space"; space: Space; deviceCount: number }
+  | { kind: "logout"; hasSavedToken: boolean };
 const memberRoles: Array<Exclude<Space["role"], "owner">> = ["admin", "operator", "viewer"];
 
 
@@ -61,20 +63,40 @@ function initialTheme(): Theme {
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
+// Only a flag that this browser offered to save the login token in its
+// password manager; the token itself is never stored by the page.
+const tokenSavedKey = "sinthmux-token-saved";
+function tokenSaved(): boolean {
+  try { return localStorage.getItem(tokenSavedKey) === "1"; } catch { return false; }
+}
+function markTokenSaved() {
+  try { localStorage.setItem(tokenSavedKey, "1"); } catch { /* ignore */ }
+}
+
 async function getJSON<T>(path: string): Promise<T> {
   return request<T>(path);
 }
 
 function Login({ githubEnabled, theme, onToggleTheme, onLogin }: { githubEnabled: boolean; theme: Theme; onToggleTheme: () => void; onLogin: () => void }) {
-  const [showToken, setShowToken] = useState(false);
+  const [showToken, setShowToken] = useState(true);
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [githubNotice, setGithubNotice] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError("");
-    try { await request("/api/v1/auth/token", { method: "POST", body: JSON.stringify({ token }) }); setToken(""); onLogin(); }
-    catch (err) { setError(err instanceof Error ? err.message : "登录失败"); }
+    try {
+      await request("/api/v1/auth/token", { method: "POST", body: JSON.stringify({ token: token.trim() }) });
+      // A real form submit with username + current-password fields lets the
+      // browser offer to save the token, and fill it in next time.
+      if ("PasswordCredential" in window) {
+        try { await navigator.credentials.store(new (window as unknown as { PasswordCredential: new (data: { id: string; password: string; name: string }) => Credential }).PasswordCredential({ id: `SinthMux · ${location.host}`, password: token.trim(), name: "SinthMux 登录令牌" })); } catch { /* the browser may decline */ }
+      }
+      markTokenSaved();
+      setToken(""); onLogin();
+    }
+    catch (err) { setError(err instanceof Error && /invalid login token/.test(err.message) ? "令牌无效、已过期或已被撤销。" : err instanceof Error ? err.message : "登录失败"); setShowHelp(true); }
     finally { setBusy(false); }
   }
   return <main className="login-shell">
@@ -87,12 +109,21 @@ function Login({ githubEnabled, theme, onToggleTheme, onLogin }: { githubEnabled
         ? <a className="github-login" href="/api/v1/auth/github/start">使用 GitHub 登录</a>
         : <button className="github-login" type="button" onClick={() => setGithubNotice(true)}>使用 GitHub 登录</button>}
       {githubNotice && !githubEnabled && <div className="notice">当前服务尚未配置 GitHub 登录。请由部署者配置 OAuth 或统一登录服务。</div>}
-      {showToken ? <form className="login-token-form" onSubmit={(event) => void submit(event)}>
-        <label htmlFor="login-token">用户令牌</label>
-        <input id="login-token" type="password" autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} required autoFocus />
-        <p className="login-token-help">首次使用？在部署机器的仓库目录运行 <code>./scripts/docker-up.sh</code>，再用 <code>cat deploy/.bootstrap-token</code> 查看初始令牌。</p>
+      {showToken ? <form className="login-token-form" method="post" action="/api/v1/auth/token" autoComplete="on" onSubmit={(event) => void submit(event)}>
+        {/* Hidden username so password managers file the token under this Hub. */}
+        <input type="text" name="username" autoComplete="username" value={`SinthMux · ${location.host}`} readOnly hidden />
+        <label htmlFor="login-token">登录令牌</label>
+        <input id="login-token" name="password" type="password" autoComplete="current-password" placeholder="smt_…" value={token} onChange={(event) => setToken(event.target.value)} required autoFocus />
         <button type="submit" disabled={busy}>{busy ? "登录中…" : "使用令牌登录"}</button>
         {error && <div className="notice error">{error}</div>}
+        <button className="login-help-toggle" type="button" aria-expanded={showHelp} onClick={() => setShowHelp(!showHelp)}>找不到令牌？</button>
+        {showHelp && <div className="login-help">
+          <p><strong>先看看这些地方：</strong>浏览器或系统的密码管理器（Chrome、Safari 钥匙串、1Password 等，搜索 “SinthMux”）；你创建令牌时复制到的备忘录。</p>
+          <p><strong>还有一台已登录的设备？</strong>在那里打开“登录令牌” → “新建令牌”，把新令牌拿到这里登录。</p>
+          <p><strong>都没有？</strong>请 Hub 的部署者在服务器的仓库目录运行下面的命令，为你签发一个 24 小时有效的恢复令牌（不影响已有令牌和设备）：</p>
+          <pre>./scripts/recovery-token.sh</pre>
+          <p className="login-help-note">首次部署时的初始令牌在服务器的 <code>deploy/.bootstrap-token</code>，有效期 24 小时。</p>
+        </div>}
       </form> : <button className="login-token-toggle" type="button" onClick={() => setShowToken(true)}>使用令牌登录</button>}
     </section>
   </main>;
@@ -124,6 +155,10 @@ function dialogText(action: DialogAction): { title: string; description?: string
     case "remove-member": return { title: "移除成员", description: `确定从当前空间移除 ${action.member.name}？`, confirmLabel: "移除成员", destructive: true };
     case "revoke-token": return { title: "撤销登录令牌", description: `撤销“${action.token.name}”后，使用它登录的会话将失效。`, confirmLabel: "撤销令牌", destructive: true };
     case "revoke-device": return { title: "移除设备", description: `移除“${action.device.name}”后，设备代理将立即断开。`, confirmLabel: "移除设备", destructive: true };
+    case "delete-space": return { title: "删除空间", description: `将删除“${action.space.name}”及其中的${action.deviceCount ? ` ${action.deviceCount} 台设备、` : ""}成员和待用配对码，设备代理会立即断开，且无法恢复。设备上的 tmux 会话不受影响。请输入空间名称确认。`, confirmLabel: "删除空间", destructive: true };
+    case "logout": return action.hasSavedToken
+      ? { title: "退出登录", description: "退出后需要用登录令牌重新登录。如果浏览器已保存令牌，登录时会自动填入。", confirmLabel: "退出" }
+      : { title: "退出前请确认能再登录", description: "重新登录需要登录令牌。令牌只在创建时显示一次，SinthMux 无法再次查看。如果没有保存，可以先新建一个令牌并保存到密码管理器或备忘录。", confirmLabel: "仍然退出", destructive: true };
   }
 }
 
@@ -172,9 +207,10 @@ export default function App() {
   async function submitDialog() {
     if (!dialogAction || dialogBusy) return;
     const name = dialogName.trim();
-    const needsName = ["create-token", "create-space", "create-device", "add-member"].includes(dialogAction.kind);
+    const needsName = ["create-token", "create-space", "create-device", "add-member", "delete-space"].includes(dialogAction.kind);
     const needsSpace = ["create-device", "add-member", "add-github-member", "change-role", "remove-member", "revoke-device"].includes(dialogAction.kind);
     if (needsName && !name) { setDialogError("请输入名称"); return; }
+    if (dialogAction.kind === "delete-space" && name !== dialogAction.space.name) { setDialogError("名称不一致"); return; }
     if (needsSpace && !activeSpace) { setDialogError("空间不可用，请刷新后重试"); return; }
     const spaceId = activeSpace?.id;
     setDialogBusy(true);
@@ -184,7 +220,7 @@ export default function App() {
         case "create-token": {
           const result = await request<{ token: string }>("/api/v1/auth/tokens", { method: "POST", body: JSON.stringify({ name }) });
           setSecretCopied(false);
-          setSecret({ label: "登录令牌（仅显示一次）", value: result.token });
+          setSecret({ label: "登录令牌（仅显示一次）", value: result.token, hint: "SinthMux 只保存令牌的哈希，关闭后无法再次查看。请现在把它存进密码管理器或备忘录；下次在登录页输入时，浏览器也会提示保存。有效期 90 天。" });
           break;
         }
         case "create-space": {
@@ -226,6 +262,16 @@ export default function App() {
         case "revoke-device":
           await request(`/api/v1/spaces/${spaceId}/devices/${dialogAction.device.id}`, { method: "DELETE" });
           break;
+        case "delete-space":
+          await request(`/api/v1/spaces/${dialogAction.space.id}`, { method: "DELETE" });
+          setSelectedSpace(null);
+          setSelectedDevice(null);
+          setShowMembers(false);
+          break;
+        case "logout":
+          await request("/api/v1/auth/logout", { method: "POST" });
+          setCSRF(""); setSecret(null); setActiveTerminal(null);
+          break;
       }
       setDialogAction(null);
       await queryClient.invalidateQueries();
@@ -235,7 +281,7 @@ export default function App() {
       setDialogBusy(false);
     }
   }
-  async function logout() { await runAction(async () => { await request("/api/v1/auth/logout", { method: "POST" }); setCSRF(""); setSecret(null); setActiveTerminal(null); }); }
+  function logout() { openDialog({ kind: "logout", hasSavedToken: tokenSaved() }); }
 
   if (formal && me.isError) return <Login githubEnabled={status.data?.githubLoginEnabled ?? false} theme={theme} onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")} onLogin={() => { void me.refetch(); }} />;
 
@@ -248,7 +294,7 @@ export default function App() {
     <main className={`shell${activeTerminal ? " terminal-shell" : ""}`} id="top">
       {activeTerminal ? <Suspense fallback={<div className="session-note">正在打开终端…</div>}><TerminalView key={`${activeTerminal.deviceId}:${activeTerminal.session}`} {...activeTerminal} theme={theme} onBack={() => setActiveTerminal(null)} /></Suspense> : <>
       <div className="page-heading"><div><h1>设备 <span>{items.length}</span></h1></div><button className="refresh-button" type="button" onClick={() => { void status.refetch(); void devices.refetch(); }}><RefreshCw />刷新</button></div>
-      {formal && me.data && <div className="workspace-bar"><label>空间 <select ref={spaceSelect} aria-label="当前空间" value={activeSpace?.id ?? ""} onChange={(event) => { setSelectedSpace(event.target.value); setSelectedDevice(null); }}><option value="" disabled>选择空间</option>{me.data.spaces.map((space) => <option value={space.id} key={space.id}>{space.name} · {space.role}</option>)}</select></label><button type="button" onClick={() => openDialog({ kind: "create-space" })}>新建空间</button>{activeSpace && (activeSpace.role === "owner" || activeSpace.role === "admin") && <button type="button" onClick={() => openDialog({ kind: "create-device" })}>添加设备</button>}{activeSpace && <button type="button" onClick={() => setShowMembers(!showMembers)}>成员</button>}<button type="button" onClick={() => setShowTokens(!showTokens)}>登录令牌</button><button type="button" onClick={() => void logout()}>退出</button></div>}
+      {formal && me.data && <div className="workspace-bar"><label>空间 <select ref={spaceSelect} aria-label="当前空间" value={activeSpace?.id ?? ""} onChange={(event) => { setSelectedSpace(event.target.value); setSelectedDevice(null); }}><option value="" disabled>选择空间</option>{me.data.spaces.map((space) => <option value={space.id} key={space.id}>{space.name} · {space.role}</option>)}</select></label><button type="button" onClick={() => openDialog({ kind: "create-space" })}>新建空间</button>{activeSpace && (activeSpace.role === "owner" || activeSpace.role === "admin") && <button type="button" onClick={() => openDialog({ kind: "create-device" })}>添加设备</button>}{activeSpace && <button type="button" onClick={() => setShowMembers(!showMembers)}>成员</button>}{activeSpace?.kind === "team" && activeSpace.role === "owner" && <button type="button" className="danger-text" onClick={() => openDialog({ kind: "delete-space", space: activeSpace, deviceCount: items.length })}>删除空间</button>}<button type="button" onClick={() => setShowTokens(!showTokens)}>登录令牌</button><button type="button" onClick={logout}>退出</button></div>}
       {formal && showMembers && activeSpace && <div className="management-panel"><div className="management-heading"><strong>成员</strong>{me.data?.user.githubId && <span>我的 GitHub ID：{me.data.user.githubId}</span>}{activeSpace.role === "owner" && <><button type="button" onClick={() => openDialog({ kind: "add-member" })}>添加令牌成员</button><button type="button" onClick={() => openDialog({ kind: "add-github-member" })}>添加 GitHub 成员</button></>}</div>{members.data?.members.map((member) => <div className="management-row" key={member.userId}><span>{member.name} · {member.role}</span>{activeSpace.role === "owner" && member.role !== "owner" && <><button type="button" onClick={() => openDialog({ kind: "change-role", member })}>修改角色</button><button type="button" onClick={() => openDialog({ kind: "remove-member", member })}>移除</button></>}</div>)}</div>}
       {formal && showTokens && <div className="management-panel"><div className="management-heading"><strong>我的登录令牌</strong><button type="button" onClick={() => openDialog({ kind: "create-token" })}>新建令牌</button></div>{tokens.data?.tokens.map((token) => <div className="management-row" key={token.id}><span>{token.name} · {new Date(token.expiresAt).toLocaleDateString()}</span><button type="button" onClick={() => openDialog({ kind: "revoke-token", token })}>撤销</button></div>)}</div>}
       {secret && <div className="secret-panel"><strong>{secret.label}</strong>{secret.install && <div className="os-tabs" role="tablist">{installOSOptions.map((option) => <button key={option.id} type="button" role="tab" aria-selected={secret.install?.os === option.id} className={secret.install?.os === option.id ? "active" : ""} onClick={() => { const install = secret.install!; setSecretCopied(false); setSecret({ ...secret, value: installCommand(option.id, install.hub, install.code), install: { ...install, os: option.id } }); }}>{option.label}</button>)}</div>}<pre>{secret.value}</pre>{secret.hint && <p>{secret.hint}</p>}<button type="button" onClick={() => { void navigator.clipboard.writeText(secret.value).then(() => setSecretCopied(true)).catch(() => setNotice("复制失败，请手动选中内容复制。")); }}>{secretCopied ? "已复制" : "复制"}</button><button type="button" onClick={() => setSecret(null)}>关闭</button></div>}
@@ -258,8 +304,9 @@ export default function App() {
       </>}
     </main>
     {dialogAction && <ActionDialog key={dialogAction.kind} {...dialogText(dialogAction)} busy={dialogBusy} error={dialogError} onClose={closeDialog} onSubmit={() => void submitDialog()}>
-      {["create-token", "create-space", "create-device", "add-member"].includes(dialogAction.kind) && <label className="dialog-field">
-        <span>{dialogAction.kind === "create-token" ? "令牌名称" : dialogAction.kind === "create-space" ? "空间名称" : dialogAction.kind === "create-device" ? "设备名称" : "成员名称"}</span>
+      {dialogAction.kind === "logout" && !dialogAction.hasSavedToken && <button type="button" className="dialog-secondary" disabled={dialogBusy} onClick={() => openDialog({ kind: "create-token" })}>先新建一个令牌并保存</button>}
+      {["create-token", "create-space", "create-device", "add-member", "delete-space"].includes(dialogAction.kind) && <label className="dialog-field">
+        <span>{dialogAction.kind === "create-token" ? "令牌名称" : dialogAction.kind === "create-space" ? "空间名称" : dialogAction.kind === "create-device" ? "设备名称" : dialogAction.kind === "delete-space" ? `输入“${dialogAction.space.name}”确认` : "成员名称"}</span>
         <input value={dialogName} onChange={(event) => setDialogName(event.target.value)} maxLength={80} disabled={dialogBusy} />
       </label>}
       {dialogAction.kind === "add-github-member" && <label className="dialog-field">

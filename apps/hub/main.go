@@ -43,6 +43,9 @@ func main() {
 			os.Exit(1)
 		}
 		defer store.DB.Close()
+		if len(os.Args) > 1 && os.Args[1] == "recovery-token" {
+			os.Exit(recoveryToken(store, os.Args[2:]))
+		}
 		if len(os.Args) > 1 && os.Args[1] == "bootstrap-token" {
 			name := "Owner"
 			if len(os.Args) > 2 {

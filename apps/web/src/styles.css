@@ -133,6 +133,11 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .terminal-keys { display: grid; gap: 6px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: var(--surface-alt); }
 .key-row { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .key-row::-webkit-scrollbar { display: none; }
+.key-tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.key-tabs::-webkit-scrollbar { display: none; }
+.key-tabs button { flex: 0 0 auto; height: 26px; padding: 0 11px; border: 1px solid transparent; border-radius: 13px; background: transparent; color: var(--muted); font-size: 12px; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.key-tabs button.active { border-color: var(--line); background: var(--surface); color: var(--ink); font-weight: 600; }
+.key-divider { flex: 0 0 1px; align-self: stretch; margin: 4px 1px; background: var(--line); }
 .key { min-width: 42px; height: 36px; flex: 0 0 auto; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); font: 600 13px ui-monospace, SFMono-Regular, Menlo, monospace; touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
 .key:active { background: var(--accent-soft); }
 .key.shortcut { color: var(--accent); }
@@ -235,3 +240,15 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   .key { min-width: 40px; height: 34px; padding: 0 8px; }
   .action-dialog form { padding: 20px; }
 }
+
+/* Login token recovery help */
+.login-token-form .login-help-toggle { margin-top: 2px; padding: 4px 0; border: 0; background: none; color: var(--muted); font-size: 12px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.login-token-form .login-help-toggle:hover { color: var(--accent); }
+.login-help { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-alt); color: var(--muted); font-size: 12px; line-height: 1.6; text-align: left; }
+.login-help p { margin: 0; }
+.login-help strong { color: var(--ink); }
+.login-help pre { margin: 0; padding: 8px 10px; overflow-x: auto; border-radius: 6px; background: var(--surface); color: var(--ink); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all; }
+.login-help-note { font-size: 11px; }
+.dialog-secondary { justify-self: start; padding: 8px 12px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent-soft); color: var(--accent); font-size: 13px; cursor: pointer; }
+.workspace-bar button.danger-text { color: #c2410c; }
+.workspace-bar button.danger-text:hover { border-color: #c2410c; color: #c2410c; }

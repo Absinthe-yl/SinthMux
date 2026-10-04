@@ -6,7 +6,9 @@ Web 位于 `apps/web/`，使用 React 19、TypeScript、Vite、React Query 和 x
 
 | 文件 | 职责 |
 | --- | --- |
-| `src/App.tsx` | 登录页、主题、当前空间、设备列表、成员、令牌、配对命令和设备卡片 |
+| `src/App.tsx` | 登录页（`username`+`current-password` 表单与 `PasswordCredential`，让浏览器保存令牌；“找不到令牌？”指引）、主题、当前空间、删除空间、退出确认、设备列表、成员、令牌、配对命令和设备卡片 |
+| `src/mobileInput.ts` | 触屏设备上接管 xterm 隐藏 textarea 的输入：在外层容器捕获阶段处理 `beforeinput`/composition，修复软键盘空格、标点、中文拼音和自动纠正，并让按键栏 Ctrl/Alt 作用于软键盘字母 |
+| `src/terminalKeys.ts` | 按键栏的 xterm 转义序列（方向、Home/End、PgUp/PgDn、Delete、F1–F12）与 Ctrl/Alt 处理 |
 | `src/SessionPanel.tsx` | 会话查询、创建、重命名、关闭、打开；按在线状态、能力和角色显示操作 |
 | `src/TerminalView.tsx` | xterm 实例、尺寸同步、票据申请、WebSocket 连接与退避重连；字号调节、快捷键栏和命令输入框 |
 | `src/terminalKeys.ts` | 快捷键栏的按键序列：Ctrl/Alt 修饰（单次/锁定）、方向键与翻页的 xterm 转义序列 |
