@@ -248,7 +248,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .login-card .login-help p { margin: 0; }
 .login-card .login-help .login-help-note { font-size: 11px; opacity: .85; }
 .login-help strong { color: var(--ink); }
-.login-help pre { margin: 0; padding: 8px 10px; overflow-x: auto; border-radius: 6px; background: var(--surface); color: var(--ink); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all; }
+.login-help pre { margin: 0; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 6px; background: var(--surface); color: var(--ink); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all; }
 .login-card .login-hint { margin: 2px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; text-align: center; }
 .login-card .login-hint strong { color: var(--ink); }
 .login-divider { display: flex; align-items: center; gap: 10px; margin: 16px 0 4px; color: var(--muted); font-size: 12px; }
