@@ -115,7 +115,7 @@ function Login({ githubEnabled, theme, onToggleTheme, onLogin }: { githubEnabled
       {showToken ? <form className="login-token-form" method="post" action="/api/v1/auth/token" autoComplete="on" onSubmit={(event) => void submit(event)}>
         {/* Hidden username so password managers file the token under this Hub. */}
         <input type="text" name="username" autoComplete="username" value={`SinthMux · ${location.host}`} readOnly hidden />
-        <label htmlFor="login-token">粘贴管理员发给你的令牌</label>
+        <label htmlFor="login-token">登录令牌</label>
         <input id="login-token" name="password" type="password" autoComplete="current-password" placeholder="smt_…" value={token} onChange={(event) => setToken(event.target.value)} required autoFocus />
         <button type="submit" disabled={busy}>{busy ? "登录中…" : "登录"}</button>
         {error && <div className="notice error">{error}</div>}
