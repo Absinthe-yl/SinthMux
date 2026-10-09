@@ -116,7 +116,7 @@ function Login({ githubEnabled, theme, onToggleTheme, onLogin }: { githubEnabled
         {/* Hidden username so password managers file the token under this Hub. */}
         <input type="text" name="username" autoComplete="username" value={`SinthMux · ${location.host}`} readOnly hidden />
         <label htmlFor="login-token">粘贴管理员发给你的令牌</label>
-        <input id="login-token" name="password" type="password" autoComplete="current-password" placeholder="smt_ 开头的一串字符" value={token} onChange={(event) => setToken(event.target.value)} required autoFocus />
+        <input id="login-token" name="password" type="password" autoComplete="current-password" placeholder="smt_…" value={token} onChange={(event) => setToken(event.target.value)} required autoFocus />
         <button type="submit" disabled={busy}>{busy ? "登录中…" : "登录"}</button>
         {error && <div className="notice error">{error}</div>}
         <p className="login-hint">没有令牌？<strong>找管理员要一个</strong>，粘贴到上面就能登录。</p>
