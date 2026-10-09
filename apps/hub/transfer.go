@@ -20,6 +20,7 @@ import (
 
 const (
 	transferWindow       = 4
+	exportWindow         = 8
 	maxUploadsPerDevice  = 2
 	maxExportLinesOption = 1_000_000
 )
@@ -260,45 +261,49 @@ func (h *transferHandler) exportHistory(w http.ResponseWriter, r *http.Request) 
 		defer cancel()
 		_, _ = h.manager.Call(closeCtx, deviceID, protocol.RPCRequest{Method: "terminal.export.close", Transfer: &protocol.TransferRequest{ID: begin.ID}})
 	}()
-	// Read the first window before committing to a 200 so early failures
-	// still produce a JSON error.
+	// Keep up to exportWindow reads in flight and write them in order: a
+	// sliding window, so one slow chunk delays only itself, not a whole batch.
 	type piece struct {
 		data    []byte
 		failure *rpcFailure
 	}
-	readWindow := func(start int64) []piece {
-		count := 0
-		for offset := start; offset < begin.Size && count < transferWindow; offset += protocol.TransferChunkSize {
-			count++
-		}
-		pieces := make([]piece, count)
-		var wait sync.WaitGroup
-		for index := range pieces {
-			wait.Add(1)
-			go func(index int) {
-				defer wait.Done()
-				offset := start + int64(index)*protocol.TransferChunkSize
-				result, f := h.transfer(ctx, deviceID, protocol.RPCRequest{Method: "terminal.export.read", Transfer: &protocol.TransferRequest{ID: begin.ID, Offset: offset}})
-				if f == nil && int64(len(result.Data)) != min(protocol.TransferChunkSize, begin.Size-offset) {
-					f = &rpcFailure{http.StatusBadGateway, "short export chunk"}
-				}
-				if f != nil {
-					pieces[index] = piece{failure: f}
-					return
-				}
-				pieces[index] = piece{data: result.Data}
-			}(index)
-		}
-		wait.Wait()
-		return pieces
+	readCtx, cancelReads := context.WithCancel(ctx)
+	defer cancelReads()
+	read := func(offset int64) <-chan piece {
+		result := make(chan piece, 1)
+		go func() {
+			response, f := h.transfer(readCtx, deviceID, protocol.RPCRequest{Method: "terminal.export.read", Transfer: &protocol.TransferRequest{ID: begin.ID, Offset: offset}})
+			if f == nil && int64(len(response.Data)) != min(protocol.TransferChunkSize, begin.Size-offset) {
+				f = &rpcFailure{http.StatusBadGateway, "short export chunk"}
+			}
+			if f != nil {
+				result <- piece{failure: f}
+				return
+			}
+			result <- piece{data: response.Data}
+		}()
+		return result
 	}
-	offset := int64(0)
-	first := readWindow(0)
-	for _, item := range first {
-		if item.failure != nil {
-			writeJSON(w, item.failure.status, map[string]string{"error": item.failure.message})
+	var inFlight []<-chan piece
+	next := int64(0)
+	fill := func() {
+		for len(inFlight) < exportWindow && next < begin.Size {
+			inFlight = append(inFlight, read(next))
+			next += protocol.TransferChunkSize
+		}
+	}
+	fill()
+	// Wait for the first chunk before committing to a 200 so early failures
+	// still produce a JSON error.
+	var first piece
+	if len(inFlight) > 0 {
+		first = <-inFlight[0]
+		inFlight = inFlight[1:]
+		if first.failure != nil {
+			writeJSON(w, first.failure.status, map[string]string{"error": first.failure.message})
 			return
 		}
+		fill()
 	}
 	filename := session + "-" + time.Now().Format("20060102-150405") + ".txt"
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -306,21 +311,19 @@ func (h *transferHandler) exportHistory(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Length", strconv.FormatInt(begin.Size, 10))
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	window := first
-	for {
-		for _, item := range window {
-			if item.failure != nil {
-				return // headers are sent; a short body tells the client it failed
-			}
-			if _, err := w.Write(item.data); err != nil {
-				return
-			}
-			offset += int64(len(item.data))
+	if _, err := w.Write(first.data); err != nil {
+		return
+	}
+	for len(inFlight) > 0 {
+		item := <-inFlight[0]
+		inFlight = inFlight[1:]
+		if item.failure != nil {
+			return // headers are sent; a short body tells the client it failed
 		}
-		if offset >= begin.Size {
+		if _, err := w.Write(item.data); err != nil {
 			return
 		}
-		window = readWindow(offset)
+		fill()
 	}
 }
 

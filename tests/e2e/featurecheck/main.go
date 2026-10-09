@@ -27,6 +27,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,10 +43,12 @@ var (
 	session     = flag.String("session", "e2e-feat", "tmux session to create and remove")
 	insecure    = flag.Bool("insecure", false, "skip TLS verification")
 	skip        = flag.String("skip", "", "comma-separated check IDs to skip, e.g. U7,X6,N6,P2")
+	only        = flag.String("only", "", "comma-separated check IDs to run; all others are skipped")
 	restartCmd  = flag.String("restart", "", "shell command run on the device (through the terminal) to restart the connector for N6")
 	big         = flag.Bool("big", true, "run the 60 000 line export (X6)")
 	failures    int
 	skipped     = map[string]bool{}
+	selected    = map[string]bool{}
 )
 
 func check(id, name string, ok bool, detail string) {
@@ -61,7 +64,7 @@ func check(id, name string, ok bool, detail string) {
 }
 
 func want(id string) bool {
-	if skipped[id] {
+	if skipped[id] || len(selected) > 0 && !selected[id] {
 		fmt.Printf("[SKIP] %-3s\n", id)
 		return false
 	}
@@ -319,6 +322,11 @@ func main() {
 			skipped[id] = true
 		}
 	}
+	for _, id := range strings.Split(*only, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			selected[id] = true
+		}
+	}
 	if *hub == "" || *token == "" || *device == "" {
 		fmt.Fprintln(os.Stderr, "usage: featurecheck -hub URL -device NAME [-token T] [-viewer-token T] [-skip U7,X6]")
 		os.Exit(2)
@@ -423,8 +431,15 @@ func main() {
 			time.Sleep(500 * time.Millisecond)
 			conn.Close()
 		}
-		time.Sleep(5 * time.Second)
-		check("U6", "上传中途断开，设备上无 .part 残留", err == nil && partials() == "0", errString(err))
+		// Behind a reverse proxy the Hub learns about the drop a little later.
+		start, left := time.Now(), "?"
+		for time.Since(start) < 15*time.Second {
+			time.Sleep(time.Second)
+			if left = partials(); left == "0" {
+				break
+			}
+		}
+		check("U6", "上传中途断开，设备上无 .part 残留", err == nil && left == "0", fmt.Sprintf("%v left=%s %s", time.Since(start).Round(100*time.Millisecond), left, errString(err)))
 	}
 	if want("U7") {
 		data := randomBytes(8 << 20)
@@ -449,7 +464,7 @@ func main() {
 	if want("U9") {
 		done := make(chan struct{})
 		go func() { owner.upload(dev.ID, "bg.bin", randomBytes(10<<20)); close(done) }()
-		worst := time.Duration(0)
+		worst, failed := time.Duration(0), ""
 		for i := 0; i < 5; i++ {
 			start := time.Now()
 			out, ok := term.run(fmt.Sprintf("echo ping%d", i), 10*time.Second)
@@ -458,11 +473,12 @@ func main() {
 				worst = elapsed
 				if !ok {
 					worst = time.Hour
+					failed = fmt.Sprintf("ping%d got %q", i, out)
 				}
 			}
 		}
 		<-done
-		check("U9", "上传期间终端回显不被阻塞（< 1 s）", worst < time.Second, worst.Round(time.Millisecond).String())
+		check("U9", "上传期间终端回显不被阻塞（< 1 s）", worst < time.Second, worst.Round(time.Millisecond).String()+" "+failed)
 	}
 
 	// ---------- Export ----------
@@ -523,7 +539,21 @@ func main() {
 				status, header, data, err := owner.export(dev.ID, exportSession, "all")
 				elapsed := time.Since(start)
 				ok := err == nil && status == 200 && fmt.Sprint(len(data)) == header.Get("Content-Length") && strings.Contains(string(data), "   59999 x")
-				check("X6", "6 万行大历史导出", ok, fmt.Sprintf("%.1f MiB in %v", float64(len(data))/(1<<20), elapsed.Round(10*time.Millisecond)))
+				// Data crosses device -> Hub and Hub -> this client; the slower
+				// link bounds the time. Measure both with a static download of the
+				// connector binary (the device fetches it from the Hub too) and
+				// allow 1.5x that transfer time plus 3 s, but at least 15 s.
+				budget := 15 * time.Second
+				rate := downloadRate()
+				if deviceRate := deviceDownloadRate(xterm); deviceRate > 0 && (rate == 0 || deviceRate < rate) {
+					rate = deviceRate
+				}
+				if rate > 0 {
+					if linkTime := time.Duration(float64(len(data))/rate*1.5*float64(time.Second)) + 3*time.Second; linkTime > budget {
+						budget = linkTime
+					}
+				}
+				check("X6", "6 万行大历史导出", ok && elapsed <= budget, fmt.Sprintf("%.1f MiB in %v, budget %v at %.0f KiB/s", float64(len(data))/(1<<20), elapsed.Round(10*time.Millisecond), budget.Round(100*time.Millisecond), rate/1024))
 			}
 			xterm.conn.CloseNow()
 		}
@@ -535,7 +565,9 @@ func main() {
 
 	// ---------- Notifications ----------
 	notify := "~/.local/bin/sinthmux-connector"
-	if path, ok := term.run("ls \"$(dirname \"$(readlink -f /proc/$(pgrep -n -f sinthmux-connector)/exe 2>/dev/null || echo ~/.local/bin/x)\")\"/sinthmux-connector 2>/dev/null || true", 10*time.Second); ok && path != "" {
+	// Use the running connector's binary: a process whose whole command line is
+	// a path ending in /sinthmux-connector (the probing shell has more words).
+	if path, ok := term.run("ps -eo args= | awk 'NF == 1 && $1 ~ /\\/sinthmux-connector$/ { print $1; exit }'", 10*time.Second); ok && path != "" {
 		notify = path
 	}
 	if bin := os.Getenv("SINTHMUX_E2E_NOTIFY_BIN"); bin != "" {
@@ -677,4 +709,36 @@ func tail(s string, n int) string {
 		return s
 	}
 	return s[len(s)-n:]
+}
+
+// downloadRate measures the link in bytes per second with a static download
+// from the Hub (the connector binary), or returns 0.
+func downloadRate() float64 {
+	client := &http.Client{Timeout: 90 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: *insecure}}}
+	start := time.Now()
+	response, err := client.Get(*hub + "/downloads/sinthmux-connector-linux-amd64")
+	if err != nil {
+		return 0
+	}
+	defer response.Body.Close()
+	n, err := io.Copy(io.Discard, response.Body)
+	if err != nil || response.StatusCode != http.StatusOK || n < 1<<20 {
+		return 0
+	}
+	return float64(n) / time.Since(start).Seconds()
+}
+
+// deviceDownloadRate measures the device's link to the Hub by having the
+// device download the connector binary from the Hub URL it is connected to.
+func deviceDownloadRate(term *terminal) float64 {
+	command := fmt.Sprintf("curl -sk -o /dev/null -w '%%{speed_download}' %s/downloads/sinthmux-connector-linux-amd64", *hub)
+	out, ok := term.run(command, 90*time.Second)
+	if !ok {
+		return 0
+	}
+	rate, err := strconv.ParseFloat(strings.TrimSpace(out), 64)
+	if err != nil {
+		return 0
+	}
+	return rate
 }
