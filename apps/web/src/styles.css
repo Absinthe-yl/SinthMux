@@ -102,7 +102,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .session-note { margin: 8px 0 0; color: var(--muted); font-size: 11px; }
 .session-repair { margin-top: 10px; }
 .session-repair p { margin: 0 0 6px; }
-.session-repair pre { margin: 0 0 6px; padding: 8px; border-radius: 6px; background: var(--surface-alt); color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.session-repair pre { margin: 0 0 6px; padding: 8px; border-radius: 6px; background: var(--surface-alt); color: var(--ink); white-space: pre-wrap; word-break: keep-all; }
 .empty-sessions { margin: 12px 0 2px; }
 .notice { margin-bottom: 10px; padding: 9px 11px; border-radius: 7px; font-size: 11px; }
 .notice.error { border: 1px solid var(--danger); background: var(--danger-soft); color: var(--danger); }
@@ -244,11 +244,13 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 /* Login token recovery help */
 .login-token-form .login-help-toggle { margin: 0 auto; padding: 4px 0; border: 0; background: none; color: var(--muted); font-size: 11px; opacity: .75; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .login-token-form .login-help-toggle:hover { color: var(--accent); }
-.login-help { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-alt); color: var(--muted); font-size: 12px; line-height: 1.6; text-align: left; }
+.login-help { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-alt); color: var(--muted); font-size: 12px; line-height: 1.6; text-align: left; }
 .login-card .login-help p { margin: 0; }
-.login-card .login-help .login-help-note { font-size: 11px; opacity: .85; }
+.login-card .login-help .login-help-note { font-size: 11px; opacity: .7; text-align: center; }
+.login-help-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.login-help-row span { color: var(--ink); font-weight: 600; letter-spacing: .02em; }
 .login-help strong { color: var(--ink); }
-.login-help pre { margin: 0; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 6px; background: var(--surface); color: var(--ink); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all; }
+.login-help pre { margin: 0; padding: 8px 10px; white-space: pre-wrap; word-break: keep-all; border-radius: 6px; background: var(--surface); color: var(--ink); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all; }
 .login-card .login-hint { margin: 2px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; text-align: center; }
 .login-card .login-hint strong { color: var(--ink); }
 .login-divider { display: flex; align-items: center; gap: 10px; margin: 16px 0 4px; color: var(--muted); font-size: 12px; }
