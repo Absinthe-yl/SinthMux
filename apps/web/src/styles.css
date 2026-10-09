@@ -246,6 +246,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .login-token-form .login-help-toggle:hover { color: var(--accent); }
 .login-help { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-alt); color: var(--muted); font-size: 12px; line-height: 1.6; text-align: left; }
 .login-card .login-help p { margin: 0; }
+.login-card .login-help .login-help-note { font-size: 11px; opacity: .85; }
 .login-help strong { color: var(--ink); }
 .login-help pre { margin: 0; padding: 8px 10px; overflow-x: auto; border-radius: 6px; background: var(--surface); color: var(--ink); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all; }
 .login-card .login-hint { margin: 2px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; text-align: center; }
