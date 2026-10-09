@@ -54,7 +54,9 @@ export async function downloadHistory(deviceId: string, deviceName: string, sess
     throw new APIError(body.error ?? `导出失败：${response.status}`, response.status);
   }
   const blob = await response.blob();
-  const expected = Number(response.headers.get("Content-Length"));
+  // Content-Length is the compressed size when the proxy compresses; compare
+  // the decoded body with the size the Hub reports separately.
+  const expected = Number(response.headers.get("X-Sinthmux-Export-Size"));
   if (expected && blob.size !== expected) throw new APIError("导出中断，请重试", 502);
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
   const safeDevice = deviceName.replace(/[^\p{L}\p{N}_-]+/gu, "_").slice(0, 40) || "device";

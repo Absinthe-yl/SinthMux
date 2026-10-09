@@ -538,7 +538,7 @@ func main() {
 				start := time.Now()
 				status, header, data, err := owner.export(dev.ID, exportSession, "all")
 				elapsed := time.Since(start)
-				ok := err == nil && status == 200 && fmt.Sprint(len(data)) == header.Get("Content-Length") && strings.Contains(string(data), "   59999 x")
+				ok := err == nil && status == 200 && fmt.Sprint(len(data)) == header.Get("X-Sinthmux-Export-Size") && strings.Contains(string(data), "   59999 x")
 				// Data crosses device -> Hub and Hub -> this client; the slower
 				// link bounds the time. Measure both with a static download of the
 				// connector binary (the device fetches it from the Hub too) and

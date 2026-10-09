@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -248,7 +249,7 @@ func TestExportStreamsHistoryInOrder(t *testing.T) {
 	}
 	defer response.Body.Close()
 	got, _ := io.ReadAll(response.Body)
-	if response.StatusCode != 200 || !bytes.Equal(got, device.history) || response.Header.Get("Content-Type") != "text/plain; charset=utf-8" || !strings.HasPrefix(response.Header.Get("Content-Disposition"), "attachment; filename*=UTF-8''work-") {
+	if response.StatusCode != 200 || !bytes.Equal(got, device.history) || response.Header.Get("X-Sinthmux-Export-Size") != strconv.Itoa(len(device.history)) || response.Header.Get("Content-Type") != "text/plain; charset=utf-8" || !strings.HasPrefix(response.Header.Get("Content-Disposition"), "attachment; filename*=UTF-8''work-") {
 		t.Fatalf("status=%d len=%d want=%d headers=%v", response.StatusCode, len(got), len(device.history), response.Header)
 	}
 	for path, want := range map[string]int{"/sessions/missing/scrollback": 404, "/sessions/work/scrollback?lines=abc": 400, "/sessions/bad.name/scrollback": 400} {

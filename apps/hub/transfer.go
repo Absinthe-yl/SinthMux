@@ -309,6 +309,9 @@ func (h *transferHandler) exportHistory(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(filename))
 	w.Header().Set("Content-Length", strconv.FormatInt(begin.Size, 10))
+	// A reverse proxy may compress the body and rewrite Content-Length; this
+	// header keeps the uncompressed size so clients can detect a cut download.
+	w.Header().Set("X-Sinthmux-Export-Size", strconv.FormatInt(begin.Size, 10))
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write(first.data); err != nil {
