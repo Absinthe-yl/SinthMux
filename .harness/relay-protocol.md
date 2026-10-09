@@ -5,7 +5,7 @@
 | 通道 | 入口 | 认证 | 数据 |
 | --- | --- | --- | --- |
 | Connector → Hub | `/ws/v1/connectors/connect` | 正式模式：设备证书 + nonce 签名（`X-Sinthmux-Device-*` 请求头），旧版设备令牌在首次证书连接前仍可用；开发模式：开发令牌 | JSON `protocol.Envelope`，包含 hello、heartbeat、RPC 和 stream 消息 |
-| Browser → Hub | `/ws/v1/terminal` | 45 秒、一次性票据；正式模式额外绑定 Web session 并复核权限 | 浏览器输入/输出为二进制帧，resize 为 JSON 文本帧 |
+| Browser → Hub | `/ws/v1/terminal` | 45 秒、一次性票据；正式模式额外绑定 Web session 并复核权限 | 浏览器输入/输出为二进制帧；文本帧为 `{"type":"resize"}` 或 `{"type":"ping","id"}`（Hub 直接回 `pong`，不经过设备）；Hub 每 30 秒 Ping 浏览器，10 秒无回应即断开并释放 tmux attach |
 
 ## 主要类型与实现
 
@@ -14,6 +14,13 @@
 - `internal/relay/manager.go`：按 device ID 管理单个活动连接；关联等待中的 RPC 与终端 stream，断线时通知等待者。RPC 默认 10 秒超时。
 - `internal/relay/terminal.go`：签发并消费票据，打开 stream，转发输入、输出和 resize，周期性检查权限。
 - `apps/connector/main.go`、`tmux.go`、`terminal.go`：协议另一端，执行 RPC 与 PTY 操作。
+
+## 第一档扩展（2026-10）
+
+- 能力位（`protocol.Capability*`）：`file.upload.v1`（全平台）、`terminal.export.v1` 与 `session.notify.v1`（仅 Unix，`platform_*.go` 的 `extendedTmux`）。Hub 用 `devices.Registry.HasCapability` 判断，缺失返回 501。
+- RPC：`file.upload.begin/chunk/commit/abort`、`terminal.export.begin/read/close`、`session.notify.clear`，参数在 `RPCRequest.Transfer`，结果在 `RPCResponse.Transfer`；单块 ≤ `TransferChunkSize`（32 KiB）。Hub 端窗口 4 并发（`apps/hub/transfer.go`）。
+- 消息 `connector.notifications`：Connector → Hub 的全量提醒快照，连接建立时和变化时发送，Hub 存入 Registry，`/api/v1/devices` 返回。
+- Connector 的 RPC 并发执行（信号量 8），不会阻塞同连接上的终端输入。
 
 ## 消息流
 

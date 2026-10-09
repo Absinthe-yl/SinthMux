@@ -1,16 +1,20 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    port: 5173,
-    proxy: {
-      "/api": "http://127.0.0.1:8090",
-	  "/ws": { target: "ws://127.0.0.1:8090", ws: true },
-      "/health": "http://127.0.0.1:8090",
-      "/install": "http://127.0.0.1:8090",
-      "/downloads": "http://127.0.0.1:8090"
+// SINTHMUX_HUB_TARGET lets end-to-end tests point the dev server at a test Hub.
+export default defineConfig(({ mode }) => {
+  const hub = loadEnv(mode, ".", "SINTHMUX_").SINTHMUX_HUB_TARGET || "http://127.0.0.1:8090";
+  return {
+    plugins: [react()],
+    server: {
+      port: 5173,
+      proxy: {
+        "/api": hub,
+        "/ws": { target: hub.replace(/^http/, "ws"), ws: true },
+        "/health": hub,
+        "/install": hub,
+        "/downloads": hub
+      }
     }
-  }
+  };
 });

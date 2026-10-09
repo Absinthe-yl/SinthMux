@@ -188,6 +188,9 @@ Description=SinthMux device connector
 After=network-online.target
 [Service]
 ExecStart=%h/.local/bin/sinthmux-connector
+# The connector starts the tmux server, which then lives in this unit's cgroup.
+# Stop or restart only the connector so tmux sessions survive upgrades.
+KillMode=process
 Environment="SINTHMUX_TMUX_BIN=$tmux_bin"
 Environment="SINTHMUX_TMUX_SOCKET=$tmux_socket"
 Environment="PATH=$tmux_dir:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -226,6 +229,7 @@ elif [[ "$platform" == darwin ]]; then
 <key>StandardOutPath</key><string>$escaped_log_dir/connector.log</string>
 <key>StandardErrorPath</key><string>$escaped_log_dir/connector.log</string>
 <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+<key>AbandonProcessGroup</key><true/>
 </dict></plist>
 EOF
   launchctl bootout "gui/$(id -u)/com.sinthmux.connector" 2>/dev/null || true

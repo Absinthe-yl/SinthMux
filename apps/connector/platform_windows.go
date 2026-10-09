@@ -22,6 +22,13 @@ const bundledTmuxName = "tmux.exe"
 // on every command. Session names are already restricted to [A-Za-z0-9_-].
 func sessionTarget(name string) string { return name }
 
+// paneTarget is unused on Windows while extendedTmux is false.
+func paneTarget(name string) string { return name + ":" }
+
+// extendedTmux is false until psmux support for capture-pane ranges, user
+// options and wait-for is verified; the Web UI hides export and notifications.
+const extendedTmux = false
+
 // The connector runs without a console; keep tmux helper calls from flashing windows.
 func hideConsole(command *exec.Cmd) {
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}

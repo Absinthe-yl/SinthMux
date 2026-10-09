@@ -1,9 +1,11 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XTerm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { ArrowLeft, CornerDownLeft, Keyboard, Maximize2, Minus, Plus } from "lucide-react";
+import { ArrowLeft, CornerDownLeft, Download, Keyboard, Maximize2, Minus, Plus, RotateCw, Upload } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type PointerEvent } from "react";
-import { APIError, request } from "./api";
+import { APIError, downloadHistory, uploadFile } from "./api";
+import { insertPaths, pasteFiles } from "./paste";
+import { stateText, TerminalConnection, type ConnectionState } from "./terminalConnection";
 import { attachMobileInput } from "./mobileInput";
 import { consumeModifiers, keySequence, modifyText, nextModifier, noModifiers, type Modifiers, type SpecialKey } from "./terminalKeys";
 
@@ -73,14 +75,28 @@ const keyGroups: { id: string; label: string; keys: BarKey[] }[] = [
   ] }
 ];
 
-export default function TerminalView({ deviceId, deviceName, session, theme, onBack }: { deviceId: string; deviceName: string; session: string; theme: "light" | "dark"; onBack: () => void }) {
+export default function TerminalView({ deviceId, deviceName, session, theme, capabilities, onBack }: { deviceId: string; deviceName: string; session: string; theme: "light" | "dark"; capabilities: string[]; onBack: () => void }) {
   const host = useRef<HTMLDivElement>(null);
   const page = useRef<HTMLElement>(null);
   const terminal = useRef<XTerm | null>(null);
   const fitRef = useRef<() => void>(() => {});
   const sendRef = useRef<(data: string) => void>(() => {});
   const modsRef = useRef<Modifiers>(noModifiers);
-  const [state, setState] = useState("连接中…");
+  const [connection, setConnection] = useState<ConnectionState>({ kind: "connecting", reconnect: false });
+  const connectionRef = useRef<TerminalConnection | null>(null);
+  const transferBusy = useRef(false);
+  const uploadRef = useRef<(files: File[]) => void>(() => {});
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [transfer, setTransfer] = useState("");
+  const [exportOpen, setExportOpen] = useState(false);
+  const canUpload = capabilities.includes("file.upload.v1");
+  const canExport = capabilities.includes("terminal.export.v1");
+  // Upload/export messages replace the connection state for a few seconds.
+  useEffect(() => {
+    if (!transfer || transfer.startsWith("上传 ") || transfer.startsWith("正在导出")) return;
+    const timer = setTimeout(() => setTransfer(""), 6000);
+    return () => clearTimeout(timer);
+  }, [transfer]);
   const [showKeys, setShowKeys] = useState(touchDevice);
   const [mods, setModsState] = useState<Modifiers>(noModifiers);
   const [fontSize, setFontSize] = useState(savedFontSize);
@@ -122,7 +138,6 @@ export default function TerminalView({ deviceId, deviceName, session, theme, onB
 
   useEffect(() => {
     if (!host.current) return;
-    const abort = new AbortController();
     const styles = getComputedStyle(document.documentElement);
     const term = new XTerm({ cursorBlink: true, fontSize: savedFontSize(), minimumContrastRatio: 9, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", theme: {
       background: styles.getPropertyValue("--terminal-bg").trim(),
@@ -138,19 +153,20 @@ export default function TerminalView({ deviceId, deviceName, session, theme, onB
     textarea?.setAttribute("autocorrect", "off");
     textarea?.setAttribute("spellcheck", "false");
     let detachMobileInput = () => {};
-    let socket: WebSocket | undefined;
-    let disposed = false;
-    let connecting = false;
-    let connectedOnce = false;
-    let retryCount = 0;
-    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const connection = new TerminalConnection(deviceId, session, {
+      onState: (next) => { setConnection(next); if (next.kind !== "live") setTransfer(""); },
+      onOutput: (data) => term.write(data),
+      onReset: () => term.reset(),
+      size: () => ({ cols: term.cols, rows: term.rows })
+    });
+    connectionRef.current = connection;
     const send = (data: string) => {
-      if (socket?.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(data));
+      if (!connection.send(data)) setTransfer("连接已断开，输入未发送");
     };
     sendRef.current = send;
     const resize = () => {
       fit.fit();
-      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+      connection.resize();
     };
     fitRef.current = resize;
     const observer = new ResizeObserver(resize);
@@ -169,68 +185,71 @@ export default function TerminalView({ deviceId, deviceName, session, theme, onB
         onKey: (sequence) => { send(sequence); term.scrollToBottom(); }
       });
     }
-    const scheduleRetry = () => {
-      if (disposed || retryTimer) return;
-      const delay = Math.min(1000 * 2 ** retryCount, 10000);
-      retryCount++;
-      setState(`连接已断开，${delay / 1000} 秒后重连…`);
-      retryTimer = setTimeout(() => { retryTimer = undefined; void connect(); }, delay);
+    // Files pasted or dropped onto the terminal are uploaded to the device and
+    // their paths typed in. Capture phase runs before xterm's own paste handler.
+    const surface = host.current;
+    const onPaste = (event: ClipboardEvent) => {
+      const files = pasteFiles(event.clipboardData);
+      if (files.length === 0 || !canUpload) return;
+      event.preventDefault();
+      event.stopPropagation();
+      uploadRef.current(files);
     };
-    const connect = async () => {
-      if (disposed || connecting) return;
-      connecting = true;
-      setState(connectedOnce ? "正在重新连接…" : "连接中…");
-      try {
-        const path = `/api/v1/devices/${encodeURIComponent(deviceId)}/sessions/${encodeURIComponent(session)}/ticket`;
-        const { ticket } = await request<{ ticket: string }>(path, { method: "POST", signal: abort.signal });
-        if (disposed) return;
-        const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-        const nextSocket = new WebSocket(`${scheme}//${location.host}/ws/v1/terminal`, ["sinthmux.v1", `sinthmux.ticket.${ticket}`]);
-        socket = nextSocket;
-        nextSocket.binaryType = "arraybuffer";
-        nextSocket.onopen = () => {
-          if (disposed || socket !== nextSocket) return;
-          connecting = false;
-          if (connectedOnce) term.reset();
-          connectedOnce = true;
-          retryCount = 0;
-          setState("已连接");
-          resize();
-          if (!touchDevice) term.focus();
-        };
-        nextSocket.onmessage = (event: MessageEvent<ArrayBuffer>) => { if (socket === nextSocket && event.data instanceof ArrayBuffer) term.write(new Uint8Array(event.data)); };
-        nextSocket.onclose = (event) => {
-          if (disposed || socket !== nextSocket) return;
-          connecting = false;
-          socket = undefined;
-          if (event.code === 1008 || (event.code === 1000 && /terminal exited|cannot open tmux session|invalid terminal request/.test(event.reason))) {
-            setState(event.reason || "终端会话已结束");
-            return;
-          }
-          scheduleRetry();
-        };
-        nextSocket.onerror = () => { if (!disposed && socket === nextSocket) setState("连接中断…"); };
-      } catch (error) {
-        connecting = false;
-        if (disposed) return;
-        if (error instanceof APIError && [400, 401, 403, 404].includes(error.status)) {
-          setState(error.message);
-          return;
-        }
-        scheduleRetry();
-      }
+    const onDragOver = (event: DragEvent) => { if (canUpload && event.dataTransfer?.types.includes("Files")) event.preventDefault(); };
+    const onDrop = (event: DragEvent) => {
+      const files = Array.from(event.dataTransfer?.files ?? []);
+      if (files.length === 0 || !canUpload) return;
+      event.preventDefault();
+      uploadRef.current(files);
     };
-    const reconnectNow = () => {
-      if (disposed || connecting || socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return;
-      if (retryTimer) clearTimeout(retryTimer);
-      retryTimer = undefined;
-      void connect();
+    surface.addEventListener("paste", onPaste, true);
+    surface.addEventListener("dragover", onDragOver);
+    surface.addEventListener("drop", onDrop);
+    connection.start();
+    return () => {
+      connection.dispose();
+      connectionRef.current = null;
+      surface.removeEventListener("paste", onPaste, true);
+      surface.removeEventListener("dragover", onDragOver);
+      surface.removeEventListener("drop", onDrop);
+      observer.disconnect(); onInput.dispose(); detachMobileInput();
+      sendRef.current = () => {}; fitRef.current = () => {}; terminal.current = null; term.dispose();
     };
-    window.addEventListener("online", reconnectNow);
-    void connect();
-    return () => { disposed = true; abort.abort(); if (retryTimer) clearTimeout(retryTimer); window.removeEventListener("online", reconnectNow); socket?.close(); observer.disconnect(); onInput.dispose(); detachMobileInput(); sendRef.current = () => {}; fitRef.current = () => {}; terminal.current = null; term.dispose(); };
-  }, [deviceId, session]);
+  }, [deviceId, session, canUpload]);
 
+  const uploadFiles = async (files: File[]) => {
+    if (transferBusy.current) { setTransfer("上一个上传还没完成"); return; }
+    transferBusy.current = true;
+    const paths: string[] = [];
+    try {
+      for (const [index, file] of files.entries()) {
+        const label = files.length > 1 ? `${file.name}（${index + 1}/${files.length}）` : file.name;
+        setTransfer(`上传 ${label} 0%`);
+        const result = await uploadFile(deviceId, file, (fraction) => setTransfer(`上传 ${label} ${Math.floor(fraction * 100)}%`));
+        paths.push(result.path);
+      }
+      setTransfer(`已上传 ${paths.length} 个文件`);
+    } catch (error) {
+      setTransfer(error instanceof Error ? error.message : "上传失败");
+    } finally {
+      transferBusy.current = false;
+      if (paths.length > 0) {
+        sendRef.current(insertPaths(paths, terminal.current?.modes.bracketedPasteMode ?? false));
+        terminal.current?.focus();
+      }
+    }
+  };
+  uploadRef.current = (files) => { void uploadFiles(files); };
+  const exportHistory = async (lines: "1000" | "10000" | "all") => {
+    setExportOpen(false);
+    setTransfer("正在导出终端历史…");
+    try {
+      await downloadHistory(deviceId, deviceName, session, lines);
+      setTransfer("终端历史已导出");
+    } catch (error) {
+      setTransfer(error instanceof APIError || error instanceof Error ? error.message : "导出失败");
+    }
+  };
   const pressKey = (key: SpecialKey) => {
     sendRef.current(keySequence(key, modsRef.current, terminal.current?.modes.applicationCursorKeysMode ?? false));
     setMods(consumeModifiers(modsRef.current));
@@ -257,8 +276,17 @@ export default function TerminalView({ deviceId, deviceName, session, theme, onB
     <div className="terminal-toolbar">
       <button className="terminal-back" type="button" onClick={onBack}><ArrowLeft />返回会话</button>
       <div className="terminal-heading"><strong>{session}</strong><span>{deviceName}</span></div>
-      <span className="terminal-state">{state}</span>
+      <span className="terminal-state" data-testid="terminal-state" data-state={connection.kind}>{transfer || stateText(connection)}</span>
       <div className="terminal-tools">
+        {connection.kind !== "live" && connection.kind !== "connecting" && <button type="button" title="立即重连" aria-label="立即重连" data-testid="terminal-reconnect" onClick={() => { setTransfer(""); connectionRef.current?.reconnectNow(); }}><RotateCw /></button>}
+        {canUpload && <button type="button" title="上传文件到设备（也可直接粘贴或拖入终端）" aria-label="上传文件" data-testid="terminal-upload" onClick={() => fileInput.current?.click()}><Upload /></button>}
+        {canUpload && <input ref={fileInput} type="file" multiple hidden data-testid="terminal-upload-input" onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; if (files.length) void uploadFiles(files); }} />}
+        {canExport && <span className="export-menu"><button type="button" title="导出终端历史" aria-label="导出终端历史" aria-expanded={exportOpen} data-testid="terminal-export" onClick={() => setExportOpen((open) => !open)}><Download /></button>
+          {exportOpen && <span className="export-options" role="menu">
+            <button type="button" role="menuitem" data-testid="export-1000" onClick={() => void exportHistory("1000")}>最近 1000 行</button>
+            <button type="button" role="menuitem" data-testid="export-10000" onClick={() => void exportHistory("10000")}>最近 10000 行</button>
+            <button type="button" role="menuitem" data-testid="export-all" onClick={() => void exportHistory("all")}>全部历史</button>
+          </span>}</span>}
         <button type="button" title="缩小字号" aria-label="缩小字号" onClick={() => changeFont(-1)} disabled={fontSize === fontSizes[0]}><Minus /></button>
         <button type="button" title="放大字号" aria-label="放大字号" onClick={() => changeFont(1)} disabled={fontSize === fontSizes[fontSizes.length - 1]}><Plus /></button>
         <button type="button" title="快捷键栏" aria-label="快捷键栏" aria-pressed={showKeys} className={showKeys ? "active" : ""} onClick={() => setShowKeys((value) => !value)}><Keyboard /></button>

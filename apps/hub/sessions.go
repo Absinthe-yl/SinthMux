@@ -27,19 +27,7 @@ func (h sessionHandler) call(w http.ResponseWriter, r *http.Request, request pro
 		return nil, false
 	}
 	if !response.OK {
-		status := http.StatusBadGateway
-		switch response.ErrorCode {
-		case "invalid_name", "invalid_request":
-			status = http.StatusBadRequest
-		case "not_found":
-			status = http.StatusNotFound
-		case "already_exists":
-			status = http.StatusConflict
-		case "tmux_unavailable":
-			status = http.StatusServiceUnavailable
-		case "timeout":
-			status = http.StatusGatewayTimeout
-		}
+		status := rpcStatus(response.ErrorCode)
 		writeJSON(w, status, map[string]string{"error": response.Error})
 		return nil, false
 	}

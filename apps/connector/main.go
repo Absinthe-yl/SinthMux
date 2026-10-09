@@ -26,6 +26,9 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "notify" {
+		os.Exit(notifyCommand(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	settings := config.ConnectorFromEnv()
 	paired := false
 	if settings.DeviceToken == "" {
@@ -35,12 +38,18 @@ func main() {
 	}
 	logger := slog.New(slog.NewTextHandler(logOutput(), nil))
 	backoff := time.Second
+	go cleanUploads(logger)
+	var notices *notifier
+	if notifySupported {
+		notices = newNotifier(logger)
+		go notices.watch(context.Background())
+	}
 
 	for {
 		if paired {
 			refreshAndSave(&settings, logger)
 		}
-		if err := run(context.Background(), &settings, paired, logger); err != nil {
+		if err := run(context.Background(), &settings, paired, logger, notices); err != nil {
 			logger.Warn("connector disconnected", "error", err, "retryIn", backoff)
 			time.Sleep(backoff)
 			if backoff < 15*time.Second {
@@ -104,7 +113,9 @@ func refreshAndSave(settings *config.Connector, logger *slog.Logger) {
 
 // run keeps one connector connection. Paired devices also check hourly whether
 // their certificate needs renewal, because a connection can outlive it.
-func run(ctx context.Context, settings *config.Connector, refresh bool, logger *slog.Logger) error {
+func run(parent context.Context, settings *config.Connector, refresh bool, logger *slog.Logger, notices *notifier) error {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
 	headers, err := connectHeaders(ctx, *settings)
 	if err != nil {
 		return err
@@ -124,18 +135,32 @@ func run(ctx context.Context, settings *config.Connector, refresh bool, logger *
 	streams := newTerminalStreams(send)
 	defer streams.closeAll()
 
-	hello := protocol.Envelope{Version: protocol.Version, Type: protocol.MessageConnectorHello, Hello: &protocol.ConnectorHello{DeviceID: settings.DeviceID, Name: settings.Name, Platform: runtime.GOOS, Architecture: runtime.GOARCH, ConnectorVersion: version, Capabilities: []string{"device.info", "tmux.sessions.list", "tmux.sessions.manage", "terminal.stream"}}}
+	hello := protocol.Envelope{Version: protocol.Version, Type: protocol.MessageConnectorHello, Hello: &protocol.ConnectorHello{DeviceID: settings.DeviceID, Name: settings.Name, Platform: runtime.GOOS, Architecture: runtime.GOARCH, ConnectorVersion: version, Capabilities: capabilities()}}
 	if err := send(hello); err != nil {
 		return err
 	}
 	logger.Info("connector connected", "hub", settings.HubURL, "deviceId", settings.DeviceID)
 
-	readErrors := make(chan error, 1)
+	readErrors := make(chan error, 2)
+	fail := func(err error) {
+		select {
+		case readErrors <- err:
+		default:
+		}
+	}
+	if notices != nil {
+		go notices.publish(ctx, func(snapshot protocol.NotificationSnapshot) error {
+			return send(protocol.Envelope{Version: protocol.Version, Type: protocol.MessageNotifications, Notifications: &snapshot})
+		})
+	}
+	// RPCs run concurrently so a slow tmux command or a large transfer never
+	// blocks terminal input arriving on the same connection.
+	rpcSlots := make(chan struct{}, 8)
 	go func() {
 		for {
 			messageType, payload, err := connection.Read(ctx)
 			if err != nil {
-				readErrors <- err
+				fail(err)
 				return
 			}
 			if messageType != websocket.MessageText {
@@ -147,13 +172,23 @@ func run(ctx context.Context, settings *config.Connector, refresh bool, logger *
 			}
 			switch envelope.Type {
 			case protocol.MessageRPCRequest:
-				response := handleRPC(ctx, envelope)
-				if err := send(response); err != nil {
-					readErrors <- err
+				select {
+				case rpcSlots <- struct{}{}:
+				case <-ctx.Done():
 					return
 				}
+				go func(envelope protocol.Envelope) {
+					defer func() { <-rpcSlots }()
+					if err := send(handleRPC(ctx, envelope)); err != nil {
+						fail(err)
+					}
+				}(envelope)
 			case protocol.MessageStreamOpen:
 				streams.open(envelope.StreamOpen)
+				// Opening a session in the browser means the user has seen it.
+				if notices != nil && envelope.StreamOpen != nil {
+					go notices.clear(context.Background(), envelope.StreamOpen.Session)
+				}
 			case protocol.MessageStreamData:
 				streams.input(envelope.StreamData)
 			case protocol.MessageStreamResize:

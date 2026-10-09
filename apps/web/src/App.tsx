@@ -1,10 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronUp, Laptop, Moon, RefreshCw, Server, Sun } from "lucide-react";
-import { FormEvent, lazy, Suspense, useLayoutEffect, useRef, useState } from "react";
+import { Bell, ChevronDown, ChevronUp, Laptop, Moon, Pin, PinOff, RefreshCw, Server, Sun } from "lucide-react";
+import { FormEvent, lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { request, setCSRF } from "./api";
 import { guessInstallOS, installCommand, installOSOptions, type InstallOS } from "./installCommand";
 import ActionDialog from "./ActionDialog";
-import SessionPanel from "./SessionPanel";
+import SessionPanel, { useSessions, type SessionNotification } from "./SessionPanel";
+import { maxPins, pinKey, splitPin, usePref } from "./prefs";
 
 const TerminalView = lazy(() => import("./TerminalView"));
 
@@ -37,6 +38,7 @@ type Device = {
   architecture: string;
   status: string;
   capabilities?: string[];
+  notifications?: SessionNotification[];
 };
 type Status = { status: string; version: string; connectedDevices: number; authMode: "formal" | "development"; githubLoginEnabled: boolean };
 type Space = { id: string; name: string; kind: string; role: "owner" | "admin" | "operator" | "viewer" };
@@ -129,19 +131,39 @@ function Login({ githubEnabled, theme, onToggleTheme, onLogin }: { githubEnabled
   </main>;
 }
 
-function DeviceCard({ device, expanded, onToggle, onOpen, onRevoke, role }: { device: Device; expanded: boolean; onToggle: () => void; onOpen: (session: string) => void; onRevoke?: () => void; role?: Space["role"] }) {
+type PinProps = { pinned: (deviceId: string, session: string) => boolean; onTogglePin: (deviceId: string, session: string) => void; onRenamed: (deviceId: string, from: string, to: string) => void; onClosed: (deviceId: string, session: string) => void };
+
+function DeviceCard({ device, expanded, onToggle, onOpen, onRevoke, role, pins }: { device: Device; expanded: boolean; onToggle: () => void; onOpen: (session: string) => void; onRevoke?: () => void; role?: Space["role"]; pins: PinProps }) {
   const online = device.status === "online";
-  return <article className={`device-card${expanded ? " expanded" : ""}`}>
+  const capabilities = device.capabilities ?? [];
+  const notices = device.notifications ?? [];
+  return <article className={`device-card${expanded ? " expanded" : ""}`} data-testid={`device-${device.name}`}>
     <div className="device-main">
       <div className="device-icon" aria-hidden="true">{device.platform === "darwin" || device.platform === "windows" ? <Laptop /> : <Server />}</div>
       <div className="device-info">
-        <div className="device-title"><h2>{device.name}</h2><span className={`status-dot${online ? " online" : ""}`} /><span className="status-text">{online ? "在线" : "离线"}</span></div>
+        <div className="device-title"><h2>{device.name}</h2><span className={`status-dot${online ? " online" : ""}`} /><span className="status-text">{online ? "在线" : "离线"}</span>{notices.length > 0 && <span className={`notify-badge ${notices[0].color}`} data-testid="notify-badge" title={notices.map((item) => `${item.session}：${item.message || "有新提醒"}`).join("\n")}><Bell aria-hidden="true" />{notices.length}</span>}</div>
         <p>{device.platform} / {device.architecture}</p>
       </div>
-      {onRevoke && <button className="device-revoke" type="button" onClick={onRevoke}>移除</button>}<button className="device-toggle" type="button" aria-expanded={expanded} onClick={onToggle}>{expanded ? "收起" : "会话"}{expanded ? <ChevronUp /> : <ChevronDown />}</button>
+      {onRevoke && <button className="device-revoke" type="button" onClick={onRevoke}>移除</button>}<button className="device-toggle" type="button" aria-expanded={expanded} data-testid={`toggle-${device.name}`} onClick={onToggle}>{expanded ? "收起" : "会话"}{expanded ? <ChevronUp /> : <ChevronDown />}</button>
     </div>
-    {expanded && <SessionPanel deviceId={device.id} platform={device.platform} online={online} canManage={(device.capabilities ?? []).includes("tmux.sessions.manage") && role !== "viewer"} canClose={role === undefined || role === "owner" || role === "admin"} canOpen={role !== "viewer"} onOpen={onOpen} />}
+    {expanded && <SessionPanel deviceId={device.id} platform={device.platform} online={online} canManage={capabilities.includes("tmux.sessions.manage") && role !== "viewer"} canClose={role === undefined || role === "owner" || role === "admin"} canOpen={role !== "viewer"} notifications={notices} canClearNotification={capabilities.includes("session.notify.v1") && role !== "viewer"} pinned={(session) => pins.pinned(device.id, session)} onTogglePin={(session) => pins.onTogglePin(device.id, session)} onRenamed={(from, to) => pins.onRenamed(device.id, from, to)} onClosed={(session) => pins.onClosed(device.id, session)} onOpen={onOpen} />}
   </article>;
+}
+
+// PinnedRow reads the device's cached session list to show whether the pinned session still exists.
+function PinnedRow({ pin, device, canOpen, onOpen, onUnpin }: { pin: string; device?: Device; canOpen: boolean; onOpen: () => void; onUnpin: () => void }) {
+  const { session } = splitPin(pin);
+  const online = device?.status === "online";
+  const sessions = useSessions(device?.id ?? "", online, !!device && online);
+  const exists = sessions.data ? sessions.data.sessions.some((item) => item.name === session) : undefined;
+  const notice = device?.notifications?.find((item) => item.session === session);
+  const status = !device ? "设备不可见" : !online ? "设备离线" : exists === false ? "已不存在" : notice ? (notice.message || "有新提醒") : "在线";
+  return <li className={`pinned-row${notice ? ` notified notify-${notice.color}` : ""}`} data-testid={`pinned-${session}`}>
+    {notice ? <span className={`notify-dot ${notice.color}`} aria-hidden="true" /> : <Pin className="terminal-icon" aria-hidden="true" />}
+    <span className="session-info"><strong>{session}</strong><span>{device?.name ?? "未知设备"} · {status}</span></span>
+    <button type="button" className="pinned-open" data-testid={`pinned-open-${session}`} disabled={!online || !canOpen || exists === false} onClick={onOpen}>打开</button>
+    <button type="button" className="icon-only" title="取消置顶" aria-label={`取消置顶 ${session}`} onClick={onUnpin}><PinOff /></button>
+  </li>;
 }
 
 function dialogText(action: DialogAction): { title: string; description?: string; confirmLabel: string; destructive?: boolean } {
@@ -165,9 +187,7 @@ function dialogText(action: DialogAction): { title: string; description?: string
 export default function App() {
   const queryClient = useQueryClient();
   const [theme, setTheme] = useState<Theme>(initialTheme);
-  const [selectedDevice, setSelectedDevice] = useState<string | null>(null);
-  const [selectedSpace, setSelectedSpace] = useState<string | null>(null);
-  const [activeTerminal, setActiveTerminal] = useState<{ deviceId: string; deviceName: string; session: string } | null>(null);
+  const [activeTerminal, setActiveTerminal] = useState<{ deviceId: string; deviceName: string; session: string; capabilities: string[] } | null>(null);
   const [notice, setNotice] = useState("");
   const [secret, setSecret] = useState<{ label: string; value: string; hint?: string; install?: { hub: string; code: string; os: InstallOS } } | null>(null);
   const [secretCopied, setSecretCopied] = useState(false);
@@ -188,12 +208,52 @@ export default function App() {
   const formal = status.data?.authMode === "formal";
   const me = useQuery({ queryKey: ["me"], enabled: formal, retry: false, queryFn: async () => { const result = await getJSON<Me>("/api/v1/auth/me"); setCSRF(result.csrf); return result; } });
   const devices = useQuery({ queryKey: ["devices"], enabled: status.data?.authMode === "development" || (formal && !!me.data), queryFn: () => getJSON<{ devices: Device[] }>("/api/v1/devices"), refetchInterval: 5000 });
+  const userKey = formal ? me.data?.user.id : "dev";
+  const [selectedSpace, setSelectedSpace] = usePref<string | null>(userKey, "space", null);
+  const [expanded, setExpanded] = usePref<string[]>(userKey, "expanded", []);
+  const [pins, setPins] = usePref<string[]>(userKey, "pinned", []);
   const activeSpace = me.data?.spaces.find((space) => space.id === selectedSpace) ?? me.data?.spaces[0];
   const spaceSelect = useFitSelect();
   const members = useQuery({ queryKey: ["members", activeSpace?.id], enabled: formal && showMembers && !!activeSpace, queryFn: () => request<{ members: Member[] }>(`/api/v1/spaces/${activeSpace!.id}/members`) });
   const tokens = useQuery({ queryKey: ["tokens"], enabled: formal && showTokens && !!me.data, queryFn: () => request<{ tokens: LoginToken[] }>("/api/v1/auth/tokens") });
   const items = (devices.data?.devices ?? []).filter((device) => !formal || device.spaceId === activeSpace?.id);
   const hubOnline = !status.isError && status.data?.status === "ok";
+  const deviceById = new Map((devices.data?.devices ?? []).map((device) => [device.id, device]));
+  const visiblePins = pins.filter((pin) => { const device = deviceById.get(splitPin(pin).deviceId); return !formal || !device || device.spaceId === activeSpace?.id; });
+  const pinActions: PinProps = {
+    pinned: (deviceId, session) => pins.includes(pinKey(deviceId, session)),
+    onTogglePin: (deviceId, session) => {
+      const key = pinKey(deviceId, session);
+      setPins((current) => current.includes(key) ? current.filter((item) => item !== key) : [key, ...current].slice(0, maxPins));
+    },
+    onRenamed: (deviceId, from, to) => setPins((current) => current.map((item) => item === pinKey(deviceId, from) ? pinKey(deviceId, to) : item)),
+    onClosed: (deviceId, session) => setPins((current) => current.filter((item) => item !== pinKey(deviceId, session)))
+  };
+  const openTerminal = (device: Device, session: string) => {
+    setActiveTerminal({ deviceId: device.id, deviceName: device.name, session, capabilities: device.capabilities ?? [] });
+    // The connector clears the notification when the session is opened; refresh soon after.
+    if (device.notifications?.some((item) => item.session === session)) setTimeout(() => { void queryClient.invalidateQueries({ queryKey: ["devices"] }); }, 1500);
+  };
+
+  // Notifications: count in the tab title, and a desktop notification for new ones.
+  const allNotices = (devices.data?.devices ?? []).flatMap((device) => (device.notifications ?? []).map((item) => ({ ...item, device })));
+  const seenNotices = useRef<Map<string, number> | null>(null);
+  const [desktopAllowed, setDesktopAllowed] = useState(() => typeof Notification !== "undefined" && Notification.permission === "granted");
+  useEffect(() => {
+    document.title = allNotices.length > 0 ? `(${allNotices.length}) SinthMux` : "SinthMux";
+    const previous = seenNotices.current;
+    const next = new Map(allNotices.map((item) => [`${item.device.id}/${item.session}`, item.at]));
+    seenNotices.current = next;
+    if (!previous || !desktopAllowed || document.visibilityState === "visible" && document.hasFocus()) return;
+    for (const item of allNotices) {
+      const key = `${item.device.id}/${item.session}`;
+      if ((previous.get(key) ?? 0) < item.at) {
+        const shown = new Notification(`${item.device.name} · ${item.session}`, { body: item.message || "有新提醒", tag: key });
+        shown.onclick = () => { window.focus(); openTerminal(item.device, item.session); shown.close(); };
+      }
+    }
+  }, [devices.data, desktopAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
+  const enableDesktop = () => { void Notification.requestPermission().then((result) => setDesktopAllowed(result === "granted")); };
 
   async function runAction(action: () => Promise<void>) { setNotice(""); try { await action(); await queryClient.invalidateQueries(); } catch (error) { setNotice(error instanceof Error ? error.message : "操作失败"); } }
   function openDialog(action: DialogAction) {
@@ -265,7 +325,6 @@ export default function App() {
         case "delete-space":
           await request(`/api/v1/spaces/${dialogAction.space.id}`, { method: "DELETE" });
           setSelectedSpace(null);
-          setSelectedDevice(null);
           setShowMembers(false);
           break;
         case "logout":
@@ -294,13 +353,15 @@ export default function App() {
     <main className={`shell${activeTerminal ? " terminal-shell" : ""}`} id="top">
       {activeTerminal ? <Suspense fallback={<div className="session-note">正在打开终端…</div>}><TerminalView key={`${activeTerminal.deviceId}:${activeTerminal.session}`} {...activeTerminal} theme={theme} onBack={() => setActiveTerminal(null)} /></Suspense> : <>
       <div className="page-heading"><div><h1>设备 <span>{items.length}</span></h1></div><button className="refresh-button" type="button" onClick={() => { void status.refetch(); void devices.refetch(); }}><RefreshCw />刷新</button></div>
-      {formal && me.data && <div className="workspace-bar"><label>空间 <select ref={spaceSelect} aria-label="当前空间" value={activeSpace?.id ?? ""} onChange={(event) => { setSelectedSpace(event.target.value); setSelectedDevice(null); }}><option value="" disabled>选择空间</option>{me.data.spaces.map((space) => <option value={space.id} key={space.id}>{space.name} · {space.role}</option>)}</select></label><button type="button" onClick={() => openDialog({ kind: "create-space" })}>新建空间</button>{activeSpace && (activeSpace.role === "owner" || activeSpace.role === "admin") && <button type="button" onClick={() => openDialog({ kind: "create-device" })}>添加设备</button>}{activeSpace && <button type="button" onClick={() => setShowMembers(!showMembers)}>成员</button>}{activeSpace?.kind === "team" && activeSpace.role === "owner" && <button type="button" className="danger-text" onClick={() => openDialog({ kind: "delete-space", space: activeSpace, deviceCount: items.length })}>删除空间</button>}<button type="button" onClick={() => setShowTokens(!showTokens)}>登录令牌</button><button type="button" onClick={logout}>退出</button></div>}
+      {formal && me.data && <div className="workspace-bar"><label>空间 <select ref={spaceSelect} aria-label="当前空间" value={activeSpace?.id ?? ""} onChange={(event) => setSelectedSpace(event.target.value)}><option value="" disabled>选择空间</option>{me.data.spaces.map((space) => <option value={space.id} key={space.id}>{space.name} · {space.role}</option>)}</select></label><button type="button" onClick={() => openDialog({ kind: "create-space" })}>新建空间</button>{activeSpace && (activeSpace.role === "owner" || activeSpace.role === "admin") && <button type="button" onClick={() => openDialog({ kind: "create-device" })}>添加设备</button>}{activeSpace && <button type="button" onClick={() => setShowMembers(!showMembers)}>成员</button>}{activeSpace?.kind === "team" && activeSpace.role === "owner" && <button type="button" className="danger-text" onClick={() => openDialog({ kind: "delete-space", space: activeSpace, deviceCount: items.length })}>删除空间</button>}<button type="button" onClick={() => setShowTokens(!showTokens)}>登录令牌</button><button type="button" onClick={logout}>退出</button></div>}
       {formal && showMembers && activeSpace && <div className="management-panel"><div className="management-heading"><strong>成员</strong>{me.data?.user.githubId && <span>我的 GitHub ID：{me.data.user.githubId}</span>}{activeSpace.role === "owner" && <><button type="button" onClick={() => openDialog({ kind: "add-member" })}>添加令牌成员</button><button type="button" onClick={() => openDialog({ kind: "add-github-member" })}>添加 GitHub 成员</button></>}</div>{members.data?.members.map((member) => <div className="management-row" key={member.userId}><span>{member.name} · {member.role}</span>{activeSpace.role === "owner" && member.role !== "owner" && <><button type="button" onClick={() => openDialog({ kind: "change-role", member })}>修改角色</button><button type="button" onClick={() => openDialog({ kind: "remove-member", member })}>移除</button></>}</div>)}</div>}
       {formal && showTokens && <div className="management-panel"><div className="management-heading"><strong>我的登录令牌</strong><button type="button" onClick={() => openDialog({ kind: "create-token" })}>新建令牌</button></div>{tokens.data?.tokens.map((token) => <div className="management-row" key={token.id}><span>{token.name} · {new Date(token.expiresAt).toLocaleDateString()}</span><button type="button" onClick={() => openDialog({ kind: "revoke-token", token })}>撤销</button></div>)}</div>}
       {secret && <div className="secret-panel"><strong>{secret.label}</strong>{secret.install && <div className="os-tabs" role="tablist">{installOSOptions.map((option) => <button key={option.id} type="button" role="tab" aria-selected={secret.install?.os === option.id} className={secret.install?.os === option.id ? "active" : ""} onClick={() => { const install = secret.install!; setSecretCopied(false); setSecret({ ...secret, value: installCommand(option.id, install.hub, install.code), install: { ...install, os: option.id } }); }}>{option.label}</button>)}</div>}<pre>{secret.value}</pre>{secret.hint && <p>{secret.hint}</p>}<button type="button" onClick={() => { void navigator.clipboard.writeText(secret.value).then(() => setSecretCopied(true)).catch(() => setNotice("复制失败，请手动选中内容复制。")); }}>{secretCopied ? "已复制" : "复制"}</button><button type="button" onClick={() => setSecret(null)}>关闭</button></div>}
       {notice && <div className="notice error">{notice}</div>}
       {devices.isError && <div className="notice error">无法读取设备列表，请确认 Hub 已启动。</div>}
-      <section className="device-list" aria-label="设备列表">{items.length ? items.map((device) => <DeviceCard key={device.id} device={device} role={formal ? activeSpace?.role : undefined} onRevoke={formal && (activeSpace?.role === "owner" || activeSpace?.role === "admin") ? () => openDialog({ kind: "revoke-device", device }) : undefined} expanded={selectedDevice === device.id} onToggle={() => setSelectedDevice(selectedDevice === device.id ? null : device.id)} onOpen={(session) => setActiveTerminal({ deviceId: device.id, deviceName: device.name, session })} />) : !devices.isError && <div className="empty-state"><Server /><strong>{devices.isPending ? "正在加载设备" : "还没有设备"}</strong><span>{devices.isPending ? "" : "添加设备并运行设备代理后，设备会出现在这里。"}</span></div>}</section>
+      {(allNotices.length > 0 || visiblePins.length > 0) && typeof Notification !== "undefined" && Notification.permission === "default" && !desktopAllowed && <div className="notify-hint"><Bell aria-hidden="true" />会话提醒可以弹出桌面通知<button type="button" data-testid="enable-desktop-notify" onClick={enableDesktop}>开启桌面提醒</button></div>}
+      {visiblePins.length > 0 && <section className="pinned-section" data-testid="pinned-section" aria-label="置顶会话"><h2><Pin aria-hidden="true" />置顶会话</h2><ul>{visiblePins.map((pin) => { const { deviceId, session } = splitPin(pin); const device = deviceById.get(deviceId); return <PinnedRow key={pin} pin={pin} device={device} canOpen={!formal || activeSpace?.role !== "viewer"} onOpen={() => device && openTerminal(device, session)} onUnpin={() => setPins((current) => current.filter((item) => item !== pin))} />; })}</ul></section>}
+      <section className="device-list" aria-label="设备列表">{items.length ? items.map((device) => <DeviceCard key={device.id} device={device} role={formal ? activeSpace?.role : undefined} pins={pinActions} onRevoke={formal && (activeSpace?.role === "owner" || activeSpace?.role === "admin") ? () => openDialog({ kind: "revoke-device", device }) : undefined} expanded={expanded.includes(device.id)} onToggle={() => setExpanded((current) => current.includes(device.id) ? current.filter((id) => id !== device.id) : [...current, device.id])} onOpen={(session) => openTerminal(device, session)} />) : !devices.isError && <div className="empty-state"><Server /><strong>{devices.isPending ? "正在加载设备" : "还没有设备"}</strong><span>{devices.isPending ? "" : "添加设备并运行设备代理后，设备会出现在这里。"}</span></div>}</section>
       </>}
     </main>
     {dialogAction && <ActionDialog key={dialogAction.kind} {...dialogText(dialogAction)} busy={dialogBusy} error={dialogError} onClose={closeDialog} onSubmit={() => void submitDialog()}>

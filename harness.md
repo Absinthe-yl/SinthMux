@@ -46,7 +46,10 @@ Connector (Go) ───── tmux / PTY ───── 终端中的用户程�
 | `apps/hub/main.go` | Hub 启动、模式选择、REST 与 WebSocket 路由装配 |
 | `apps/connector/main.go` | 设备代理启动、连接、重试、心跳和消息分发 |
 | `apps/web/src/App.tsx` | 登录、空间、设备和会话页面状态 |
-| `apps/web/src/TerminalView.tsx` | 浏览器终端、票据获取与断线重连 |
+| `apps/web/src/TerminalView.tsx` | 浏览器终端、粘贴/拖放上传、导出历史 |
+| `apps/web/src/terminalConnection.ts` | 终端连接状态机：分阶段超时、心跳探测、断线恢复 |
+| `apps/hub/transfer.go` | 上传、导出历史、清除提醒的 HTTP 接口（分块 RPC） |
+| `apps/connector/transfer.go`、`notify.go` | 设备端上传/导出实现、`notify` 子命令与提醒监听 |
 | `apps/login-broker/main.go` | 可选的集中 GitHub 登录服务 |
 | `internal/config/config.go` | Hub 与设备代理的环境变量默认值 |
 | `Makefile` | 构建、测试和本地启动命令 |
@@ -54,7 +57,9 @@ Connector (Go) ───── tmux / PTY ───── 终端中的用户程�
 ## 修改时优先检查的跨模块关系
 
 - 会话操作：`SessionPanel.tsx` → `apps/hub/sessions.go` → `relay.Manager.Call` → `apps/connector/tmux.go`。
-- 终端连接：`TerminalView.tsx` → Hub 票据接口 → `relay.TerminalHandler` → `relay.Manager` → `apps/connector/terminal.go`。
+- 终端连接：`TerminalView.tsx` → `terminalConnection.ts` → Hub 票据接口 → `relay.TerminalHandler` → `relay.Manager` → `apps/connector/terminal.go`。
+- 上传 / 导出：`TerminalView.tsx` → `api.ts` → `apps/hub/transfer.go` → `relay.Manager.Call`（32 KiB 分块）→ `apps/connector/transfer.go`。
+- 会话提醒：`sinthmux-connector notify` → tmux 用户选项 + `wait-for` → `apps/connector/notify.go` → `connector.notifications` → `devices.Registry` → `/api/v1/devices` → `App.tsx`。
 - 设备接入：`App.tsx` → `internal/auth/http.go` 配对接口（CSR 换证书）→ `apps/connector/pair.go` → `auth.Server.AuthenticateConnector` → `relay.ConnectorHandler`。
 - 权限：正式模式的 HTTP 请求由 `auth.Server.Require` 与 `auth.Server.Device` 校验；终端 WebSocket 另由票据绑定浏览器会话并复核权限。
 

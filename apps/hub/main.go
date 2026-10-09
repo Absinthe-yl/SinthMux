@@ -118,6 +118,7 @@ func main() {
 	router.Get("/downloads/{file}", downloadHandler(os.Getenv("SINTHMUX_CONNECTOR_DOWNLOAD_DIR")))
 	sessionAPI := sessionHandler{manager: manager}
 	terminalAPI := relay.NewTerminalHandler(manager)
+	transferAPI := newTransferHandler(manager, registry)
 	if authServer != nil {
 		public, _ := url.Parse(settings.PublicURL)
 		terminalAPI.OriginPattern = public.Host
@@ -159,7 +160,8 @@ func main() {
 			}
 			writeJSON(w, 200, map[string]any{"devices": result})
 		})
-		wrap := func(action string, handler http.HandlerFunc) http.HandlerFunc {
+		// audited checks the role for action and records the request as auditAction.
+		audited := func(action, auditAction string, handler http.HandlerFunc) http.HandlerFunc {
 			if authServer != nil {
 				return authServer.Device(action, func(w http.ResponseWriter, request *http.Request) {
 					if action == "list" {
@@ -179,15 +181,21 @@ func main() {
 					if name := chi.URLParam(request, "sessionName"); name != "" {
 						target += "/" + name
 					}
-					authServer.Store.Audit(request.Context(), session.User.ID, spaceID, target, "session."+action, result)
+					authServer.Store.Audit(request.Context(), session.User.ID, spaceID, target, auditAction, result)
 				})
 			}
 			return handler
+		}
+		wrap := func(action string, handler http.HandlerFunc) http.HandlerFunc {
+			return audited(action, "session."+action, handler)
 		}
 		r.Get("/api/v1/devices/{deviceId}/sessions", wrap("list", sessionAPI.list))
 		r.Post("/api/v1/devices/{deviceId}/sessions", wrap("create", sessionAPI.create))
 		r.Patch("/api/v1/devices/{deviceId}/sessions/{sessionName}", wrap("rename", sessionAPI.rename))
 		r.Delete("/api/v1/devices/{deviceId}/sessions/{sessionName}", wrap("close", sessionAPI.close))
+		r.Post("/api/v1/devices/{deviceId}/uploads", audited("input", "file.upload", transferAPI.upload))
+		r.Get("/api/v1/devices/{deviceId}/sessions/{sessionName}/scrollback", audited("input", "terminal.export", transferAPI.exportHistory))
+		r.Delete("/api/v1/devices/{deviceId}/sessions/{sessionName}/notification", audited("input", "session.notify.clear", transferAPI.clearNotification))
 		r.Post("/api/v1/devices/{deviceId}/sessions/{sessionName}/ticket", wrap("input", func(w http.ResponseWriter, r *http.Request) {
 			deviceID := chi.URLParam(r, "deviceId")
 			var grant relay.TerminalGrant

@@ -87,6 +87,10 @@ func (h ConnectorHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			connector.finish(envelope.RequestID, rpcResult{response: envelope.Response})
+		case protocol.MessageNotifications:
+			if connector != nil && envelope.Version == protocol.Version && envelope.Notifications != nil {
+				h.Registry.SetNotifications(deviceID, envelope.Notifications.Items)
+			}
 		case protocol.MessageStreamData, protocol.MessageStreamClose:
 			if connector != nil && envelope.Version == protocol.Version {
 				connector.streamEvent(envelope)

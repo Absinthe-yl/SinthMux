@@ -37,6 +37,8 @@ type TerminalHandler struct {
 	ValidateGrant    func(context.Context, TerminalGrant) bool
 	OriginPattern    string
 	LANOriginPattern string
+	// PingInterval is how often the Hub pings the browser; 0 means 30 seconds.
+	PingInterval time.Duration
 }
 
 func NewTerminalHandler(manager *Manager) *TerminalHandler {
@@ -142,6 +144,17 @@ func (h *TerminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer stop()
 	validationTicker := time.NewTicker(2 * time.Second)
 	defer validationTicker.Stop()
+	// Ping the browser so a vanished client (closed laptop, dropped mobile
+	// network) releases its tmux attach instead of lingering until TCP gives up.
+	pingInterval := h.PingInterval
+	if pingInterval <= 0 {
+		pingInterval = 30 * time.Second
+	}
+	pingTicker := time.NewTicker(pingInterval)
+	defer pingTicker.Stop()
+	pingFailed := make(chan struct{}, 1)
+	pinging := false
+	pingDone := make(chan struct{}, 1)
 	readErrors := make(chan error, 1)
 	go func() {
 		for {
@@ -159,15 +172,32 @@ func (h *TerminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			case websocket.MessageBinary:
 				envelope = protocol.Envelope{Version: protocol.Version, Type: protocol.MessageStreamData, StreamData: &protocol.StreamData{StreamID: id, Data: body}}
 			case websocket.MessageText:
-				var resize struct {
+				var control struct {
 					Type string `json:"type"`
+					ID   string `json:"id"`
 					Cols uint16 `json:"cols"`
 					Rows uint16 `json:"rows"`
 				}
-				if json.Unmarshal(body, &resize) != nil || resize.Type != "resize" || resize.Cols == 0 || resize.Rows == 0 {
+				if json.Unmarshal(body, &control) != nil {
 					continue
 				}
-				envelope = protocol.Envelope{Version: protocol.Version, Type: protocol.MessageStreamResize, StreamResize: &protocol.StreamResize{StreamID: id, Cols: resize.Cols, Rows: resize.Rows}}
+				// The browser pings to detect a silently dead connection; the Hub
+				// answers itself so a busy device cannot delay the reply.
+				if control.Type == "ping" {
+					if len(control.ID) > 64 {
+						continue
+					}
+					pong, _ := json.Marshal(map[string]string{"type": "pong", "id": control.ID})
+					if writeErr := conn.Write(ctx, websocket.MessageText, pong); writeErr != nil {
+						readErrors <- writeErr
+						return
+					}
+					continue
+				}
+				if control.Type != "resize" || control.Cols == 0 || control.Rows == 0 {
+					continue
+				}
+				envelope = protocol.Envelope{Version: protocol.Version, Type: protocol.MessageStreamResize, StreamResize: &protocol.StreamResize{StreamID: id, Cols: control.Cols, Rows: control.Rows}}
 			default:
 				continue
 			}
@@ -180,6 +210,25 @@ func (h *TerminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-pingTicker.C:
+			if pinging {
+				continue
+			}
+			pinging = true
+			go func() {
+				pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel()
+				if conn.Ping(pingCtx) != nil {
+					pingFailed <- struct{}{}
+				}
+				pingDone <- struct{}{}
+			}()
+		case <-pingDone:
+			pinging = false
+		case <-pingFailed:
+			// A peer that ignores pings will not answer a close handshake either.
+			_ = conn.CloseNow()
 			return
 		case <-validationTicker.C:
 			if h.ValidateGrant != nil && !h.ValidateGrant(ctx, item.grant) {

@@ -51,12 +51,20 @@ func handleRPC(ctx context.Context, envelope protocol.Envelope) protocol.Envelop
 		if err == nil {
 			err = closeSession(ctx, request.Name)
 		}
+	case "file.upload.begin", "file.upload.chunk", "file.upload.commit", "file.upload.abort", "terminal.export.begin", "terminal.export.read", "terminal.export.close":
+		result.Response.Transfer, err = handleTransfer(ctx, *request)
+	case "session.notify.clear":
+		err = checkNames(request.Name)
+		if err == nil {
+			err = clearNotification(ctx, request.Name)
+		}
 	default:
 		err = &tmuxError{code: "unsupported_method", message: "unsupported RPC method"}
 	}
 	if err != nil {
 		result.Response.Name = ""
 		result.Response.Sessions = nil
+		result.Response.Transfer = nil
 		result.Response.Error = err.Error()
 		var commandErr *tmuxError
 		if errors.As(err, &commandErr) {
@@ -94,10 +102,17 @@ func tmuxExecutable() string {
 	return "tmux"
 }
 
+// tmuxSocketPath, when set, pins tmux to one server socket (tmux -S). The
+// notify command uses it to reach the server of the pane it runs in.
+var tmuxSocketPath string
+
 // tmuxArgs selects the tmux server. SINTHMUX_TMUX_SOCKET (tmux -L) is set by
 // the installer when another tmux version already owns the default socket,
 // because tmux clients cannot talk to a server of a different protocol.
 func tmuxArgs(args ...string) []string {
+	if tmuxSocketPath != "" {
+		return append([]string{"-S", tmuxSocketPath}, args...)
+	}
 	if socket := os.Getenv("SINTHMUX_TMUX_SOCKET"); protocol.ValidSessionName(socket) {
 		return append([]string{"-L", socket}, args...)
 	}
@@ -105,29 +120,42 @@ func tmuxArgs(args ...string) []string {
 }
 
 func runTmux(ctx context.Context, args ...string) (string, error) {
-	commandCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	output, err := runTmuxBytes(ctx, 5*time.Second, args...)
+	return string(output), err
+}
+
+// runTmuxBytes runs tmux with a timeout and returns stdout. stderr is kept
+// apart so captured terminal text is never mixed with tmux warnings.
+func runTmuxBytes(ctx context.Context, timeout time.Duration, args ...string) ([]byte, error) {
+	commandCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	command := exec.CommandContext(commandCtx, tmuxExecutable(), tmuxArgs(args...)...)
 	hideConsole(command)
-	output, err := command.CombinedOutput()
+	var stderr strings.Builder
+	command.Stderr = &stderr
+	output, err := command.Output()
 	if err == nil {
-		return string(output), nil
+		return output, nil
 	}
 	if commandCtx.Err() != nil {
-		return "", &tmuxError{code: "timeout", message: "tmux command timed out"}
+		return nil, &tmuxError{code: "timeout", message: "tmux command timed out"}
 	}
 	if errors.Is(err, exec.ErrNotFound) || os.IsNotExist(err) {
-		return "", &tmuxError{code: "tmux_unavailable", message: "设备代理找不到 tmux；请在设备上安装 tmux 后重新运行接入命令"}
+		return nil, &tmuxError{code: "tmux_unavailable", message: "设备代理找不到 tmux；请在设备上安装 tmux 后重新运行接入命令"}
 	}
-	message := strings.TrimSpace(string(output))
+	return nil, classifyTmuxError(strings.TrimSpace(stderr.String() + "\n" + string(output)))
+}
+
+func classifyTmuxError(message string) error {
+	message = strings.TrimSpace(message)
 	lower := strings.ToLower(message)
 	switch {
 	case strings.Contains(lower, "duplicate session"):
-		return "", &tmuxError{code: "already_exists", message: "session already exists"}
-	case strings.Contains(lower, "can't find session"), strings.Contains(lower, "no such session"), strings.Contains(lower, "no server running"), strings.Contains(lower, "failed to connect to server"), strings.Contains(lower, "error connecting to") && strings.Contains(lower, "no such file or directory"):
-		return "", &tmuxError{code: "not_found", message: "session not found"}
+		return &tmuxError{code: "already_exists", message: "session already exists"}
+	case strings.Contains(lower, "can't find session"), strings.Contains(lower, "can't find pane"), strings.Contains(lower, "no such session"), strings.Contains(lower, "no server running"), strings.Contains(lower, "failed to connect to server"), strings.Contains(lower, "error connecting to") && strings.Contains(lower, "no such file or directory"):
+		return &tmuxError{code: "not_found", message: "session not found"}
 	default:
-		return "", &tmuxError{code: "tmux_error", message: fmt.Sprintf("tmux command failed: %s", message)}
+		return &tmuxError{code: "tmux_error", message: fmt.Sprintf("tmux command failed: %s", message)}
 	}
 }
 

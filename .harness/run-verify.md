@@ -46,3 +46,15 @@ git -c http.proxy=socks5h://127.0.0.1:7897 -c http.version=HTTP/1.1 push origin 
 ## 协作检查
 
 改动前按 `harness.md` 找到目标模块及调用链两端；改动后运行与变更范围匹配的检查，并记录跳过或缺失的外部依赖。新增模块、入口、协议消息或运行约束时更新相应 `.harness/` 文件和根索引。不要把 `docs/IMPLEMENTATION_PLAN.md` 中尚未落地的设计写成当前行为。
+
+## 第一档功能端到端测试
+
+```bash
+tests/e2e/tier1.sh             # 本机隔离：测试库 + Hub :18092 + Vite :15173 + 独立 HOME/tmux socket；协议检查 + 浏览器检查
+BROWSER=0 tests/e2e/tier1.sh   # 只跑协议检查（featurecheck、stallcheck、termcheck、老设备代理兼容）
+SINTHMUX_E2E_TOKEN=... go run ./tests/e2e/featurecheck -hub https://<hub> -device <名称> -skip U7 -restart 'systemctl --user restart sinthmux-connector'
+```
+
+- 运行时间较长（2–4 分钟），在会被中断的环境里放后台运行。
+- 系统设置了 `HTTP_PROXY` 时，脚本已设置 `NO_PROXY=127.0.0.1,localhost`，否则 Go 客户端和 Vite 代理会把本机流量发给代理，得到 502。
+- `.env` 中的开发 Connector 变量会被脚本 unset，测试设备只用各自的配对配置。

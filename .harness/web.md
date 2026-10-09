@@ -31,3 +31,12 @@ Web 位于 `apps/web/`，使用 React 19、TypeScript、Vite、React Query 和 x
 - API 字段或权限改变：同步检查 `App.tsx`、`SessionPanel.tsx` 与 `src/api.ts`；服务端仍是权限真相。
 - 终端断线、尺寸或输入问题：先看 `TerminalView.tsx`，再看 `relay/terminal.go` 和 Connector 的 `terminal.go`。
 - 前端验证：`npm --prefix apps/web run typecheck`、`npm --prefix apps/web run build`。仓库当前没有 Web 自动化测试套件。
+
+## 终端连接、上传、导出、提醒与置顶
+
+- `terminalConnection.ts`：连接状态机（票据 8 s、握手 10 s、首帧 10 s 超时；可见时每 15 s ping，6 s 无回应判死；`online`/`pageshow`/回到前台立即探测，5 s 无回应重连）。只有最新一次尝试能写终端。真正结束（1008、`terminal exited` 等）停止重连并显示“立即重连”按钮。
+- 上传：`paste.ts` 的 `pasteFiles` 判定（有文件且无文本或文本等于文件名才上传，Office 图文混合按文本），`api.ts` 的 `uploadFile`（XHR 带进度）；完成后按 `bracketedPasteMode` 插入路径。拖放和工具栏按钮同一路径。
+- 导出：`api.ts` 的 `downloadHistory`，校验 `Content-Length` 后用 Blob 下载。
+- 提醒：设备列表每 5 秒轮询带回 `notifications`；设备卡角标、会话行彩色左边线和消息、标题 `(N) SinthMux`、授权后的桌面通知。
+- `prefs.ts`：按用户隔离的 localStorage（`sinthmux:v1:<userId>:pinned|expanded|space`）。置顶区复用 `useSessions` 缓存；重命名迁移置顶，关闭/批量关闭取消置顶。
+- E2E 用的 `data-testid` 见 `docs/TIER1_DESIGN.md` 第 4–8 节，修改时同步 `tests/e2e/browser.sh`。
