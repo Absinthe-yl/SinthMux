@@ -84,6 +84,7 @@ function Login({ githubEnabled, theme, onToggleTheme, onLogin }: { githubEnabled
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [githubNotice, setGithubNotice] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError("");
@@ -106,8 +107,11 @@ function Login({ githubEnabled, theme, onToggleTheme, onLogin }: { githubEnabled
       <img className="login-mark" src="/sinthmux-mark-transparent.png?v=3" alt="" />
       <h1>SinthMux</h1>
       <p>终端继续运行，回来接着用。</p>
-      {githubEnabled && <a className="github-login" href="/api/v1/auth/github/start">使用 GitHub 登录</a>}
-      {githubEnabled && <div className="login-divider">或</div>}
+      {githubEnabled
+        ? <a className="github-login" href="/api/v1/auth/github/start">使用 GitHub 登录</a>
+        : <button className="github-login" type="button" onClick={() => setGithubNotice(true)}>使用 GitHub 登录</button>}
+      {githubNotice && !githubEnabled && <div className="notice">当前服务尚未配置 GitHub 登录。请由部署者配置 OAuth 或统一登录服务。</div>}
+      <div className="login-divider">或</div>
       {showToken ? <form className="login-token-form" method="post" action="/api/v1/auth/token" autoComplete="on" onSubmit={(event) => void submit(event)}>
         {/* Hidden username so password managers file the token under this Hub. */}
         <input type="text" name="username" autoComplete="username" value={`SinthMux · ${location.host}`} readOnly hidden />
