@@ -84,7 +84,6 @@ function Login({ githubEnabled, theme, onToggleTheme, onLogin }: { githubEnabled
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [githubNotice, setGithubNotice] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError("");
@@ -98,7 +97,7 @@ function Login({ githubEnabled, theme, onToggleTheme, onLogin }: { githubEnabled
       markTokenSaved();
       setToken(""); onLogin();
     }
-    catch (err) { setError(err instanceof Error && /invalid login token/.test(err.message) ? "令牌无效、已过期或已被撤销。" : err instanceof Error ? err.message : "登录失败"); setShowHelp(true); }
+    catch (err) { setError(err instanceof Error && /invalid login token/.test(err.message) ? "令牌不对或已过期，请找管理员重新要一个。" : err instanceof Error ? err.message : "登录失败"); }
     finally { setBusy(false); }
   }
   return <main className="login-shell">
@@ -107,24 +106,20 @@ function Login({ githubEnabled, theme, onToggleTheme, onLogin }: { githubEnabled
       <img className="login-mark" src="/sinthmux-mark-transparent.png?v=3" alt="" />
       <h1>SinthMux</h1>
       <p>终端继续运行，回来接着用。</p>
-      {githubEnabled
-        ? <a className="github-login" href="/api/v1/auth/github/start">使用 GitHub 登录</a>
-        : <button className="github-login" type="button" onClick={() => setGithubNotice(true)}>使用 GitHub 登录</button>}
-      {githubNotice && !githubEnabled && <div className="notice">当前服务尚未配置 GitHub 登录。请由部署者配置 OAuth 或统一登录服务。</div>}
+      {githubEnabled && <a className="github-login" href="/api/v1/auth/github/start">使用 GitHub 登录</a>}
+      {githubEnabled && <div className="login-divider">或</div>}
       {showToken ? <form className="login-token-form" method="post" action="/api/v1/auth/token" autoComplete="on" onSubmit={(event) => void submit(event)}>
         {/* Hidden username so password managers file the token under this Hub. */}
         <input type="text" name="username" autoComplete="username" value={`SinthMux · ${location.host}`} readOnly hidden />
-        <label htmlFor="login-token">登录令牌</label>
-        <input id="login-token" name="password" type="password" autoComplete="current-password" placeholder="smt_…" value={token} onChange={(event) => setToken(event.target.value)} required autoFocus />
-        <button type="submit" disabled={busy}>{busy ? "登录中…" : "使用令牌登录"}</button>
+        <label htmlFor="login-token">粘贴管理员发给你的令牌</label>
+        <input id="login-token" name="password" type="password" autoComplete="current-password" placeholder="smt_ 开头的一串字符" value={token} onChange={(event) => setToken(event.target.value)} required autoFocus />
+        <button type="submit" disabled={busy}>{busy ? "登录中…" : "登录"}</button>
         {error && <div className="notice error">{error}</div>}
-        <button className="login-help-toggle" type="button" aria-expanded={showHelp} onClick={() => setShowHelp(!showHelp)}>找不到令牌？</button>
+        <p className="login-hint">没有令牌？<strong>找管理员要一个</strong>，粘贴到上面就能登录。</p>
+        <button className="login-help-toggle" type="button" aria-expanded={showHelp} onClick={() => setShowHelp(!showHelp)}>我是管理员</button>
         {showHelp && <div className="login-help">
-          <p><strong>先看看这些地方：</strong>浏览器或系统的密码管理器（Chrome、Safari 钥匙串、1Password 等，搜索 “SinthMux”）；你创建令牌时复制到的备忘录。</p>
-          <p><strong>还有一台已登录的设备？</strong>在那里打开“登录令牌” → “新建令牌”，把新令牌拿到这里登录。</p>
-          <p><strong>都没有？</strong>请 Hub 的部署者在服务器的仓库目录运行下面的命令，为你签发一个 24 小时有效的恢复令牌（不影响已有令牌和设备）：</p>
+          <p>在服务器的 SinthMux 目录运行，把输出的令牌发给对方：</p>
           <pre>./scripts/recovery-token.sh</pre>
-          <p className="login-help-note">首次部署时的初始令牌在服务器的 <code>deploy/.bootstrap-token</code>，有效期 24 小时。</p>
         </div>}
       </form> : <button className="login-token-toggle" type="button" onClick={() => setShowToken(true)}>使用令牌登录</button>}
     </section>

@@ -17,4 +17,4 @@ if grep -q '^SINTHMUX_SITE=' "$env_file" && [[ -f deploy/docker-compose.public.y
 fi
 if ! docker info >/dev/null 2>&1; then compose=(sudo "${compose[@]}"); fi
 token="$("${compose[@]}" exec -T hub /sinthmux-hub recovery-token "$@")"
-printf '\n恢复令牌（24 小时内有效，仅显示这一次）：\n\n  %s\n\n在登录页选择“使用令牌登录”粘贴它；登录后到“登录令牌”新建一个长期令牌并妥善保存。\n' "$token"
+printf '\n恢复令牌（24 小时内有效，仅显示这一次）：\n\n  %s\n\n粘贴到登录页的输入框里登录；登录后到“登录令牌”新建一个长期令牌并妥善保存。\n' "$token"

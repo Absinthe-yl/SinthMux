@@ -242,13 +242,16 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 }
 
 /* Login token recovery help */
-.login-token-form .login-help-toggle { margin-top: 2px; padding: 4px 0; border: 0; background: none; color: var(--muted); font-size: 12px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.login-token-form .login-help-toggle { margin: 0 auto; padding: 4px 0; border: 0; background: none; color: var(--muted); font-size: 11px; opacity: .75; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .login-token-form .login-help-toggle:hover { color: var(--accent); }
 .login-help { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-alt); color: var(--muted); font-size: 12px; line-height: 1.6; text-align: left; }
 .login-help p { margin: 0; }
 .login-help strong { color: var(--ink); }
 .login-help pre { margin: 0; padding: 8px 10px; overflow-x: auto; border-radius: 6px; background: var(--surface); color: var(--ink); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all; }
-.login-help-note { font-size: 11px; }
+.login-hint { margin: 4px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; text-align: center; }
+.login-hint strong { color: var(--ink); }
+.login-divider { display: flex; align-items: center; gap: 10px; margin: 16px 0 4px; color: var(--muted); font-size: 12px; }
+.login-divider::before, .login-divider::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
 .dialog-secondary { justify-self: start; padding: 8px 12px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent-soft); color: var(--accent); font-size: 13px; cursor: pointer; }
 .workspace-bar button.danger-text { color: #c2410c; }
 .workspace-bar button.danger-text:hover { border-color: #c2410c; color: #c2410c; }
