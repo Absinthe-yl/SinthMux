@@ -122,8 +122,8 @@ function Login({ githubEnabled, theme, onToggleTheme, onLogin }: { githubEnabled
         <p className="login-hint">没有令牌？<strong>找管理员要一个</strong>，粘贴到上面就能登录。</p>
         <button className="login-help-toggle" type="button" aria-expanded={showHelp} onClick={() => setShowHelp(!showHelp)}>我是管理员</button>
         {showHelp && <div className="login-help">
-          <p>在服务器的 SinthMux 目录运行，把输出的令牌发给对方：</p>
-          <pre>./scripts/recovery-token.sh</pre>
+          <p>在服务器上运行，把输出的令牌发给对方：</p>
+          <pre>cd ~/SinthMux && ./scripts/recovery-token.sh</pre>
         </div>}
       </form> : <button className="login-token-toggle" type="button" onClick={() => setShowToken(true)}>使用令牌登录</button>}
     </section>
