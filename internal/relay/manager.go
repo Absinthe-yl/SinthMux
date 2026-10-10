@@ -58,10 +58,14 @@ func (a *connectorConnection) failAll(err error) {
 	for id, ch := range a.streams {
 		delete(a.streams, id)
 		closeEvent := protocol.Envelope{Type: protocol.MessageStreamClose, StreamClose: &protocol.StreamClose{StreamID: id, Reason: err.Error()}}
+		// Senders hold a.mu, so after one non-blocking drain the send cannot block.
 		select {
 		case ch <- closeEvent:
 		default:
-			<-ch
+			select {
+			case <-ch:
+			default:
+			}
 			ch <- closeEvent
 		}
 	}
@@ -93,7 +97,10 @@ func (a *connectorConnection) streamEvent(envelope protocol.Envelope) {
 		case ch <- envelope:
 		default:
 			delete(a.streams, id)
-			<-ch
+			select {
+			case <-ch:
+			default:
+			}
 			ch <- protocol.Envelope{Type: protocol.MessageStreamClose, StreamClose: &protocol.StreamClose{StreamID: id, Reason: "terminal output exceeded buffer"}}
 		}
 	}

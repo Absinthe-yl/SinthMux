@@ -106,7 +106,13 @@ func writeEnvelope(parent context.Context, connection *websocket.Conn, envelope 
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	if err := parent.Err(); err != nil {
+		return err
+	}
+	// websocket closes the whole connection when a write context ends, so a
+	// cancelled HTTP request or upload chunk must not cancel this write; only
+	// the timeout, which means the peer is stuck, may.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
 	defer cancel()
 	if err := connection.Write(ctx, websocket.MessageText, payload); err != nil && !errors.Is(err, context.Canceled) {
 		return err

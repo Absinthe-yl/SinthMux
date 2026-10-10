@@ -79,6 +79,35 @@ func TestRPCNormal(t *testing.T) {
 	}
 }
 
+func TestCancelledCallKeepsConnection(t *testing.T) {
+	manager, conn := connectedConnector(t)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for range 20 {
+		if _, err := manager.Call(cancelled, "device-1", protocol.RPCRequest{Method: "tmux.sessions.list"}); err == nil {
+			t.Fatal("cancelled call succeeded")
+		}
+	}
+	rpcRoundTrip(t, manager, conn)
+}
+
+// rpcRoundTrip completes one RPC over an existing connector connection.
+func rpcRoundTrip(t *testing.T, manager *Manager, conn *websocket.Conn) {
+	t.Helper()
+	result := make(chan error, 1)
+	go func() {
+		_, err := manager.Call(context.Background(), "device-1", protocol.RPCRequest{Method: "tmux.sessions.list"})
+		result <- err
+	}()
+	request := readRequest(t, conn)
+	if err := writeEnvelope(context.Background(), conn, protocol.Envelope{Version: protocol.Version, Type: protocol.MessageRPCResponse, RequestID: request.RequestID, Response: &protocol.RPCResponse{OK: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; err != nil {
+		t.Fatalf("connection lost after cancelled calls: %v", err)
+	}
+}
+
 func TestRPCOffline(t *testing.T) {
 	manager := NewManager()
 	_, err := manager.Call(context.Background(), "missing", protocol.RPCRequest{Method: "tmux.sessions.list"})
