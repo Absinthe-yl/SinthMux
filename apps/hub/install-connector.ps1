@@ -124,8 +124,12 @@ Move-Item -Force $tmp $exe
 
 [Environment]::SetEnvironmentVariable('SINTHMUX_TMUX_BIN', $tmux, 'User')
 $env:SINTHMUX_TMUX_BIN = $tmux
+# Windows PowerShell 5.1 turns redirected native stderr into a terminating
+# error under 'Stop'; "no server running" is the expected first-install answer.
+$ErrorActionPreference = 'Continue'
 & $tmux list-sessions *> $null
 if ($LASTEXITCODE -ne 0) { & $tmux new-session -d -s sinthmux -c $HOME *> $null }
+$ErrorActionPreference = 'Stop'
 
 # Start at login for this user, and now.
 Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'SinthMux Connector' -Value "`"$exe`""
