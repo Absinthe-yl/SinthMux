@@ -249,8 +249,11 @@ export default function App() {
     for (const item of allNotices) {
       const key = `${item.device.id}/${item.session}`;
       if ((previous.get(key) ?? 0) < item.at) {
-        const shown = new Notification(`${item.device.name} · ${item.session}`, { body: item.message || "有新提醒", tag: key });
-        shown.onclick = () => { window.focus(); openTerminal(item.device, item.session); shown.close(); };
+        // Android Chrome grants permission but throws on the constructor.
+        try {
+          const shown = new Notification(`${item.device.name} · ${item.session}`, { body: item.message || "有新提醒", tag: key });
+          shown.onclick = () => { window.focus(); openTerminal(item.device, item.session); shown.close(); };
+        } catch { /* only the title count is shown */ }
       }
     }
   }, [devices.data, desktopAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -330,7 +333,9 @@ export default function App() {
           break;
         case "logout":
           await request("/api/v1/auth/logout", { method: "POST" });
-          setCSRF(""); setSecret(null); setActiveTerminal(null);
+          setCSRF(""); setSecret(null); setActiveTerminal(null); setShowTokens(false); setShowMembers(false);
+          // Drop the previous user's cached data, not just mark it stale.
+          await queryClient.resetQueries();
           break;
       }
       setDialogAction(null);

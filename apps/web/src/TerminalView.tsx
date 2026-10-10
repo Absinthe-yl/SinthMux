@@ -15,9 +15,13 @@ const fontSizes = [11, 12, 13, 14, 15, 16, 18];
 const defaultFontSize = touchDevice ? 13 : 15;
 
 function savedFontSize() {
-  const value = Number(localStorage.getItem("sinthmux-terminal-font"));
+  const value = Number(readPref("sinthmux-terminal-font"));
   return fontSizes.includes(value) ? value : defaultFontSize;
 }
+
+// localStorage throws when the browser blocks site storage.
+function readPref(key: string) { try { return localStorage.getItem(key); } catch { return null; } }
+function writePref(key: string, value: string) { try { localStorage.setItem(key, value); } catch { /* storage disabled */ } }
 
 // Buttons in the key bar must not take focus, or the phone keyboard closes.
 const keepFocus = (event: PointerEvent) => event.preventDefault();
@@ -101,8 +105,8 @@ export default function TerminalView({ deviceId, deviceName, session, theme, cap
   const [mods, setModsState] = useState<Modifiers>(noModifiers);
   const [fontSize, setFontSize] = useState(savedFontSize);
   const [command, setCommand] = useState("");
-  const [keyGroup, setKeyGroup] = useState(() => localStorage.getItem("sinthmux-key-group") ?? "edit");
-  useEffect(() => { localStorage.setItem("sinthmux-key-group", keyGroup); }, [keyGroup]);
+  const [keyGroup, setKeyGroup] = useState(() => readPref("sinthmux-key-group") ?? "edit");
+  useEffect(() => { writePref("sinthmux-key-group", keyGroup); }, [keyGroup]);
 
   const setMods = (next: Modifiers) => { modsRef.current = next; setModsState(next); };
 
@@ -113,7 +117,7 @@ export default function TerminalView({ deviceId, deviceName, session, theme, cap
   }, [theme]);
 
   useEffect(() => {
-    localStorage.setItem("sinthmux-terminal-font", String(fontSize));
+    writePref("sinthmux-terminal-font", String(fontSize));
     if (!terminal.current) return;
     terminal.current.options.fontSize = fontSize;
     fitRef.current();
