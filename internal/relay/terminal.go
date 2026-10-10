@@ -163,10 +163,8 @@ func (h *TerminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				readErrors <- readErr
 				return
 			}
-			if h.ValidateGrant != nil && !h.ValidateGrant(ctx, item.grant) {
-				readErrors <- ErrOffline
-				return
-			}
+			// Permission is rechecked by validationTicker, not per message, so
+			// typing or pasting does not run a database query per frame.
 			var envelope protocol.Envelope
 			switch typeOfMessage {
 			case websocket.MessageBinary:
