@@ -54,6 +54,21 @@ func TestRoleMatrix(t *testing.T) {
 	}
 }
 
+func TestRateLimitKeys(t *testing.T) {
+	server := NewServer(nil, OAuthConfig{PublicURL: "http://127.0.0.1:5173"})
+	for range 10 {
+		if !server.rateLimit("renew:device-a") || !server.rateLimit("192.0.2.1:1000") {
+			t.Fatal("attempt under the limit rejected")
+		}
+	}
+	if server.rateLimit("renew:device-a") || server.rateLimit("192.0.2.1:2000") {
+		t.Fatal("eleventh attempt accepted")
+	}
+	if !server.rateLimit("renew:device-b") {
+		t.Fatal("another device shares the first device's limit")
+	}
+}
+
 func TestTokenLoginRouteRemainsAvailable(t *testing.T) {
 	router := chi.NewRouter()
 	NewServer(nil, OAuthConfig{PublicURL: "http://127.0.0.1:5173"}).Mount(router)

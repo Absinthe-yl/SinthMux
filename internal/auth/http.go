@@ -200,7 +200,9 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) rateLimit(key string) bool {
-	if host, _, err := net.SplitHostPort(key); err == nil {
+	// Only a remote address is reduced to its IP; keys such as "renew:<id>"
+	// would otherwise split into one bucket shared by every device.
+	if host, _, err := net.SplitHostPort(key); err == nil && net.ParseIP(host) != nil {
 		key = host
 	}
 	s.mu.Lock()
