@@ -49,15 +49,16 @@ func main() {
 		if paired {
 			refreshAndSave(&settings, logger)
 		}
-		if err := run(context.Background(), &settings, paired, logger, notices); err != nil {
-			logger.Warn("connector disconnected", "error", err, "retryIn", backoff)
-			time.Sleep(backoff)
-			if backoff < 15*time.Second {
-				backoff *= 2
-			}
-			continue
+		started := time.Now()
+		err := run(context.Background(), &settings, paired, logger, notices)
+		// run always returns an error; a connection that stayed up for a while
+		// starts the backoff again from one second.
+		if time.Since(started) > time.Minute {
+			backoff = time.Second
 		}
-		backoff = time.Second
+		logger.Warn("connector disconnected", "error", err, "retryIn", backoff)
+		time.Sleep(backoff)
+		backoff = min(backoff*2, 15*time.Second)
 	}
 }
 
