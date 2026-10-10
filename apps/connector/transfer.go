@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -224,13 +225,14 @@ func (t *transfers) commitUpload(request *protocol.TransferRequest) (*protocol.T
 	}
 	t.mu.Lock()
 	delete(t.uploads, request.ID)
+	received := item.received
 	t.mu.Unlock()
 	fail := func(err error) (*protocol.TransferResult, error) {
 		_ = item.file.Close()
 		_ = os.Remove(item.partPath)
 		return nil, err
 	}
-	if request.Size != item.size || item.received != item.size {
+	if request.Size != item.size || received != item.size {
 		return fail(transferFailure("checksum_mismatch", "upload is incomplete"))
 	}
 	if err := item.file.Sync(); err != nil {
@@ -270,18 +272,32 @@ func (t *transfers) abortUpload(request *protocol.TransferRequest) (*protocol.Tr
 }
 
 // cleanUploads removes stale partial uploads and week-old files at start and
-// every six hours, so pasted screenshots do not fill the disk.
+// every six hours, so pasted screenshots do not fill the disk. Idle transfers
+// are released every transferIdleTime, because a browser that disconnects
+// mid-transfer never sends abort or close.
 func cleanUploads(logger *slog.Logger) {
+	var lastPrune time.Time
 	for {
-		if dir, err := uploadDir(); err == nil {
-			removed := pruneUploads(dir, time.Now())
-			if removed > 0 {
-				logger.Info("removed old uploads", "count", removed)
+		now := time.Now()
+		activeTransfers.mu.Lock()
+		activeTransfers.expire(now)
+		activeTransfers.mu.Unlock()
+		if now.Sub(lastPrune) >= uploadCleanupEvery {
+			lastPrune = now
+			if dir, err := uploadDir(); err == nil {
+				removed := pruneUploads(dir, now)
+				if removed > 0 {
+					logger.Info("removed old uploads", "count", removed)
+				}
 			}
 		}
-		time.Sleep(uploadCleanupEvery)
+		time.Sleep(transferIdleTime)
 	}
 }
+
+// uploadNamePattern matches names created by beginUpload, so pruning never
+// touches other files in a custom SINTHMUX_UPLOAD_DIR.
+var uploadNamePattern = regexp.MustCompile(`^\.?\d{8}-\d{6}-[0-9a-f]{6}-`)
 
 func pruneUploads(dir string, now time.Time) int {
 	entries, err := os.ReadDir(dir)
@@ -291,7 +307,7 @@ func pruneUploads(dir string, now time.Time) int {
 	removed := 0
 	for _, entry := range entries {
 		info, err := entry.Info()
-		if err != nil || !info.Mode().IsRegular() {
+		if err != nil || !info.Mode().IsRegular() || !uploadNamePattern.MatchString(entry.Name()) {
 			continue
 		}
 		limit := uploadRetention

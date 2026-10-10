@@ -148,7 +148,8 @@ func TestUploadDirRefusesSymlink(t *testing.T) {
 func TestPruneUploads(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
-	for name, age := range map[string]time.Duration{"old.png": 8 * 24 * time.Hour, "new.png": time.Hour, ".x.part": 2 * time.Hour, ".y.part": time.Minute} {
+	old, fresh, oldPart, freshPart := "20260101-120000-abcdef-old.png", "20260101-120000-abcdef-new.png", ".20260101-120000-abcdef-x.part", ".20260101-120000-abcdef-y.part"
+	for name, age := range map[string]time.Duration{old: 8 * 24 * time.Hour, fresh: time.Hour, oldPart: 2 * time.Hour, freshPart: time.Minute, "notes.txt": 30 * 24 * time.Hour} {
 		path := filepath.Join(dir, name)
 		_ = os.WriteFile(path, []byte("x"), 0o600)
 		_ = os.Chtimes(path, now.Add(-age), now.Add(-age))
@@ -156,7 +157,7 @@ func TestPruneUploads(t *testing.T) {
 	if removed := pruneUploads(dir, now); removed != 2 {
 		t.Fatalf("removed %d", removed)
 	}
-	for _, name := range []string{"new.png", ".y.part"} {
+	for _, name := range []string{fresh, freshPart, "notes.txt"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Fatalf("%s removed", name)
 		}

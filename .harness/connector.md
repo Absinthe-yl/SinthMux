@@ -34,7 +34,7 @@ tmux 会话与浏览器连接生命周期分开。关闭浏览器只结束那次
 
 ## 文件上传、历史导出与会话提醒
 
-- `transfer.go`：上传写到 `~/.sinthmux/uploads`（目录 0700、文件 0600，拒绝符号链接；`SINTHMUX_UPLOAD_DIR` 可覆盖），文件名 = 时间戳-随机数-清洗后的原名（只留 `[A-Za-z0-9._-]`），`WriteAt` 分块、commit 时重算 SHA-256；启动及每 6 小时删除 1 小时前的 `.part` 和 7 天前的文件。导出用 `capture-pane -p -J -t =name: -S -N|-`，上限 32 MiB，闲置 2 分钟释放。
+- `transfer.go`：上传写到 `~/.sinthmux/uploads`（目录 0700、文件 0600，拒绝符号链接；`SINTHMUX_UPLOAD_DIR` 可覆盖），文件名 = 时间戳-随机数-清洗后的原名（只留 `[A-Za-z0-9._-]`），`WriteAt` 分块、commit 时重算 SHA-256；启动及每 6 小时删除 1 小时前的 `.part` 和 7 天前的文件（只删符合上传命名规则的文件，自定义目录里的其他文件不动）。导出用 `capture-pane -p -J -t =name: -S -N|-`，上限 32 MiB；未完成的上传和导出由 `cleanUploads` 每 2 分钟检查，闲置 2 分钟释放。
 - `notify.go`：`sinthmux-connector notify [--color] [--clear] [--session] 消息` 在会话上写用户选项 `@sinthmux_notify`（`v1:<ms>:<color>:<base64url>`）并 `wait-for -S sinthmux-notify`；Connector 阻塞在 `wait-for` 并每 15 秒兜底重读，变化时推送快照。浏览器打开会话（stream.open）时自动清除。notify 从 `$TMUX` 取 socket 路径，即使安装器用了 `-L sinthmux` 也能找到正确的 tmux 服务。
 - tmux 目标：会话类命令用 `sessionTarget`（`=name`），面板/选项类命令必须用 `paneTarget`（`=name:`），否则报 `can't find pane`。
 - systemd 单元带 `KillMode=process`：tmux 服务由 Connector 拉起、落在同一 cgroup，默认 control-group 会在重启 Connector 时杀掉所有会话。macOS plist 带 `AbandonProcessGroup`。
