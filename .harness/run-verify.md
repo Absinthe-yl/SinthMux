@@ -41,7 +41,7 @@ git -c http.proxy=socks5h://127.0.0.1:7897 -c http.version=HTTP/1.1 push origin 
 | PostgreSQL 认证链路 | 设置 `SINTHMUX_TEST_DATABASE_URL` 后运行 `go test ./internal/auth -run TestFormalStoreIntegration`；未设置时该测试会跳过 |
 | tmux 命令链路 | `go test ./apps/connector`；本机未安装 tmux 时生命周期测试会跳过 |
 | Protobuf 定义 | `make proto`，需 `protoc`；不验证当前 JSON 运行协议 |
-| 浏览器到设备的端到端行为 | 启动 Hub、Web、Connector 后实际创建、打开、断线重连和关闭 tmux 会话；当前无 Web E2E 自动化套件 |
+| 浏览器到设备的端到端行为 | `tests/e2e/tier1.sh`（需 `SINTHMUX_TEST_DATABASE_URL`、tmux、`agent-browser`），见下文“第一档功能端到端测试”；套件未覆盖的交互仍需手动启动 Hub、Web、Connector 验证 |
 
 ## 协作检查
 
@@ -55,6 +55,6 @@ BROWSER=0 tests/e2e/tier1.sh   # 只跑协议检查（featurecheck、stallcheck�
 SINTHMUX_E2E_TOKEN=... go run ./tests/e2e/featurecheck -hub https://<hub> -device <名称> -skip U7 -restart 'systemctl --user restart sinthmux-connector'
 ```
 
-- 运行时间较长（2–4 分钟），在会被中断的环境里放后台运行。
+- 运行时间较长（完整套件约 4–6 分钟），在会被中断的环境里用 `nohup` 放后台运行；被强行中断时 cleanup 不会执行，需手动清理 `/tmp/sme2e.*`、`tmux -L sme2e kill-server` 和 `git worktree prune`。
 - 系统设置了 `HTTP_PROXY` 时，脚本已设置 `NO_PROXY=127.0.0.1,localhost`，否则 Go 客户端和 Vite 代理会把本机流量发给代理，得到 502。
 - `.env` 中的开发 Connector 变量会被脚本 unset，测试设备只用各自的配对配置。

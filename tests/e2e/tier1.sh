@@ -35,6 +35,8 @@ cleanup() {
   pkill -f "$T/conn" 2>/dev/null || true
   pkill -f "$T/old-conn" 2>/dev/null || true
   pkill -f "$T/stallproxy" 2>/dev/null || true
+  # The recorded PID is the subshell; npx and Vite outlive it.
+  pkill -f "vite --host 127.0.0.1 --port 15173 --strictPort" 2>/dev/null || true
   tmux -L "$SOCK" kill-server 2>/dev/null || true
   git worktree remove --force "$T/old-src" 2>/dev/null || true
   rm -rf "$T"
