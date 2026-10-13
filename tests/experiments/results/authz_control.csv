@@ -1,0 +1,6 @@
+case,actor,status,ok
+终端票据,operator,200,1
+列出会话,viewer,200,1
+查看审计,admin,200,1
+成员列表,owner,200,1
+终端 WebSocket,operator,101,1
