@@ -2,7 +2,7 @@
 
 ## 生命周期
 
-`apps/connector/main.go` 有 `pair` 子命令和常驻连接模式。常驻模式先读环境变量；未设置设备令牌时尝试从用户配置目录的 `sinthmux/connector.json` 加载配对结果（设备私钥、证书，或旧版设备令牌），也可通过 `SINTHMUX_CONNECTOR_CONFIG` 指定路径。连接失败会退避重试；连接后发送 hello，每 15 秒发送一次心跳。设备代理只主动连 Hub，不监听入站端口。
+`apps/connector/main.go` 有 `pair` 子命令和常驻连接模式。常驻模式先读环境变量；未设置设备令牌时尝试从用户配置目录的 `sinthmux/connector.json` 加载配对结果（设备私钥、证书，或旧版设备令牌），也可通过 `SINTHMUX_CONNECTOR_CONFIG` 指定路径。连接失败会退避重试；连接后发送 hello，每 15 秒发送一次心跳，并每 15 秒对 Hub 发 WebSocket ping，10 秒无 pong 即断开重连（心跳只是写入，死链路上写也会"成功"，所以不能单靠心跳发现断线）；断开时清空 HTTP 连接池，避免复用已失效的 keep-alive 连接取 nonce。设备代理只主动连 Hub，不监听入站端口。
 
 ## 设备接入
 

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -17,6 +18,12 @@ import (
 )
 
 const version = "0.0.1-dev"
+
+// A dead path to the Hub is noticed within hubPingInterval + hubPongTimeout.
+var (
+	hubPingInterval = 15 * time.Second
+	hubPongTimeout  = 10 * time.Second
+)
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "pair" {
@@ -56,6 +63,9 @@ func main() {
 		if time.Since(started) > time.Minute {
 			backoff = time.Second
 		}
+		// Pooled keep-alive connections to the Hub may have died with the
+		// WebSocket (network switch); reusing one would hang the nonce request.
+		httpClient.CloseIdleConnections()
 		logger.Warn("connector disconnected", "error", err, "retryIn", backoff)
 		time.Sleep(backoff)
 		backoff = min(backoff*2, 15*time.Second)
@@ -198,6 +208,29 @@ func run(parent context.Context, settings *config.Connector, refresh bool, logge
 				if envelope.StreamClose != nil {
 					streams.close(envelope.StreamClose.StreamID)
 				}
+			}
+		}
+	}()
+
+	// Writes into a dead TCP path still succeed (they only fill the socket
+	// buffer), so the heartbeat alone cannot tell that the Hub is gone. A
+	// WebSocket ping must be answered; without a pong the connection is
+	// dropped and the outer loop reconnects.
+	go func() {
+		pings := time.NewTicker(hubPingInterval)
+		defer pings.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-pings.C:
+			}
+			pingCtx, cancelPing := context.WithTimeout(ctx, hubPongTimeout)
+			err := connection.Ping(pingCtx)
+			cancelPing()
+			if err != nil && ctx.Err() == nil {
+				fail(fmt.Errorf("Hub 无响应: %w", err))
+				return
 			}
 		}
 	}()

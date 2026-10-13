@@ -18,7 +18,14 @@ type ConnectorHandler struct {
 	DevToken string
 	// AuthenticateDevice returns the device ID proven by the request credential.
 	AuthenticateDevice func(*http.Request) (string, bool)
+	// IdleTimeout closes a connector that sent nothing for this long; 0 means
+	// 45 seconds. Connectors send a heartbeat every 15 seconds, so silence means
+	// the path is dead even if TCP has not noticed (NAT mapping lost, cable
+	// pulled), and the device must not stay listed as online.
+	IdleTimeout time.Duration
 }
+
+const defaultConnectorIdleTimeout = 45 * time.Second
 
 func (h ConnectorHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	authorizedID := ""
@@ -49,8 +56,15 @@ func (h ConnectorHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	idle := h.IdleTimeout
+	if idle <= 0 {
+		idle = defaultConnectorIdleTimeout
+	}
 	for {
-		messageType, payload, err := connection.Read(ctx)
+		// A read that times out closes the WebSocket, which is what we want.
+		readCtx, cancel := context.WithTimeout(ctx, idle)
+		messageType, payload, err := connection.Read(readCtx)
+		cancel()
 		if err != nil {
 			return
 		}

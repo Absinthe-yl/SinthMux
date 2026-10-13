@@ -22,7 +22,7 @@
 
 ## 设备在线状态
 
-`internal/devices/registry.go` 记录 hello 元数据、连接时间、最近心跳与在线状态；`relay.Manager` 负责真实 WebSocket 连接、等待中的 RPC 和终端流。正式模式中的设备记录在 `auth.Store`，在线状态仍靠 Registry。吊销设备时 Hub 通过 `OnDeviceRevoked` 断开当前连接。
+`internal/devices/registry.go` 记录 hello 元数据、连接时间、最近心跳与在线状态；`ConnectorHandler` 在设备 45 秒无任何消息时关闭连接，设备随即离线；`relay.Manager` 负责真实 WebSocket 连接、等待中的 RPC 和终端流。正式模式中的设备记录在 `auth.Store`，在线状态仍靠 Registry。吊销设备时 Hub 通过 `OnDeviceRevoked` 断开当前连接。
 
 ## 定位与验证
 
