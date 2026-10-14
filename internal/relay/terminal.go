@@ -1,12 +1,14 @@
 package relay
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -39,6 +41,125 @@ type TerminalHandler struct {
 	LANOriginPattern string
 	// PingInterval is how often the Hub pings the browser; 0 means 30 seconds.
 	PingInterval time.Duration
+	// WriteTimeout 限制单次浏览器写入（含等待写锁），默认 5 秒。
+	WriteTimeout time.Duration
+
+	validationInterval time.Duration
+	validationTimeout  time.Duration
+}
+
+// 保留底层连接，确保 Close 已取得 closing 标记时仍能硬关闭传输。
+// coder/websocket 的 CloseNow 在这种情况下只会等待 Close 完成。
+type terminalUpgradeWriter struct {
+	http.ResponseWriter
+	transport net.Conn
+}
+
+func (w *terminalUpgradeWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, rw, err := http.NewResponseController(w.ResponseWriter).Hijack()
+	w.transport = conn
+	return conn, rw, err
+}
+
+type terminalSocket struct {
+	*websocket.Conn
+	transport net.Conn
+}
+
+func (c terminalSocket) CloseNow() error {
+	_ = c.transport.Close()
+	return c.Conn.CloseNow()
+}
+
+func (h *TerminalHandler) writeTimeout() time.Duration {
+	if h.WriteTimeout > 0 {
+		return h.WriteTimeout
+	}
+	return 5 * time.Second
+}
+
+func (h *TerminalHandler) writeBrowser(ctx context.Context, conn interface {
+	Write(context.Context, websocket.MessageType, []byte) error
+}, kind websocket.MessageType, body []byte) error {
+	writeCtx, cancel := context.WithTimeout(ctx, h.writeTimeout())
+	defer cancel()
+	return conn.Write(writeCtx, kind, body)
+}
+
+func (h *TerminalHandler) validateGrant(ctx context.Context, grant TerminalGrant) bool {
+	timeout := h.validationTimeout
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	// ValidateGrant 必须将 context 传给数据库；超时后即使返回 true 也拒绝。
+	valid := h.ValidateGrant(checkCtx, grant)
+	return valid && checkCtx.Err() == nil
+}
+
+func closeBrowser(conn terminalSocket, code websocket.StatusCode, reason string, timeout time.Duration) {
+	done := make(chan struct{})
+	timer := time.AfterFunc(timeout, func() {
+		defer close(done)
+		_ = conn.CloseNow()
+	})
+	_ = conn.Close(code, reason)
+	if !timer.Stop() {
+		<-done
+	}
+}
+
+func (h *TerminalHandler) watchGrant(ctx context.Context, cancel context.CancelFunc, conn terminalSocket, grant TerminalGrant) {
+	if h.ValidateGrant == nil {
+		return
+	}
+	interval := h.validationInterval
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			valid := h.validateGrant(ctx, grant)
+			if ctx.Err() != nil {
+				return
+			}
+			if !valid {
+				// 先取消流及在途写入，不等待主循环，也不依赖 1008 送达。
+				cancel()
+				closeBrowser(conn, websocket.StatusPolicyViolation, "permission revoked", min(h.writeTimeout(), 100*time.Millisecond))
+				return
+			}
+		}
+	}
+}
+
+func (h *TerminalHandler) pingBrowser(ctx context.Context, cancel context.CancelFunc, conn terminalSocket) {
+	interval := h.PingInterval
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pingCtx, pingCancel := context.WithTimeout(ctx, 10*time.Second)
+			err := conn.Ping(pingCtx)
+			pingCancel()
+			if err != nil {
+				cancel()
+				return
+			}
+		}
+	}
 }
 
 func NewTerminalHandler(manager *Manager) *TerminalHandler {
@@ -116,7 +237,7 @@ func (h *TerminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		hash := sha256.Sum256([]byte(cookie.Value))
-		if subtle.ConstantTimeCompare(hash[:], item.grant.SessionHash) != 1 || !h.ValidateGrant(r.Context(), item.grant) {
+		if subtle.ConstantTimeCompare(hash[:], item.grant.SessionHash) != 1 || !h.validateGrant(r.Context(), item.grant) {
 			http.Error(w, "ticket permission denied", http.StatusForbidden)
 			return
 		}
@@ -128,43 +249,63 @@ func (h *TerminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.LANOriginPattern != "" {
 		origins = append(origins, h.LANOriginPattern)
 	}
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: origins, Subprotocols: []string{"sinthmux.v1"}})
+	upgrade := &terminalUpgradeWriter{ResponseWriter: w}
+	ws, err := websocket.Accept(upgrade, r, &websocket.AcceptOptions{OriginPatterns: origins, Subprotocols: []string{"sinthmux.v1"}})
 	if err != nil {
 		return
 	}
-	defer conn.CloseNow()
+	conn := terminalSocket{Conn: ws, transport: upgrade.transport}
 	conn.SetReadLimit(16 << 10)
 	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
+	// 撤权后只暂留浏览器读取以完成 1008 握手；流 context 和应用写立即取消。
+	readCtx, cancelRead := context.WithCancel(context.WithoutCancel(ctx))
+	validationDone := make(chan struct{})
+	go func() {
+		defer close(validationDone)
+		h.watchGrant(ctx, cancel, conn, item.grant)
+	}()
+	var workers sync.WaitGroup
+	var stop func()
+	defer func() {
+		cancel()
+		<-validationDone
+		cancelRead()
+		_ = conn.CloseNow()
+		if stop != nil {
+			stop()
+		}
+		workers.Wait()
+	}()
+	// 复核在 OpenStream 之前启动，打开流期间也必须及时关闭浏览器。
 	id, events, stop, err := h.Manager.OpenStream(ctx, item.deviceID, item.session, 80, 24)
 	if err != nil {
-		_ = conn.Close(websocket.StatusInternalError, err.Error())
+		if ctx.Err() == nil {
+			closeBrowser(conn, websocket.StatusInternalError, err.Error(), h.writeTimeout())
+		}
 		return
 	}
-	defer stop()
-	validationTicker := time.NewTicker(2 * time.Second)
-	defer validationTicker.Stop()
-	// Ping the browser so a vanished client (closed laptop, dropped mobile
-	// network) releases its tmux attach instead of lingering until TCP gives up.
-	pingInterval := h.PingInterval
-	if pingInterval <= 0 {
-		pingInterval = 30 * time.Second
+	if ctx.Err() != nil {
+		return
 	}
-	pingTicker := time.NewTicker(pingInterval)
-	defer pingTicker.Stop()
-	pingFailed := make(chan struct{}, 1)
-	pinging := false
-	pingDone := make(chan struct{}, 1)
-	readErrors := make(chan error, 1)
+	workers.Add(1)
 	go func() {
+		defer workers.Done()
+		h.pingBrowser(ctx, cancel, conn)
+	}()
+	readErrors := make(chan error, 1)
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
 		for {
-			typeOfMessage, body, readErr := conn.Read(ctx)
+			typeOfMessage, body, readErr := conn.Read(readCtx)
 			if readErr != nil {
 				readErrors <- readErr
 				return
 			}
-			// Permission is rechecked by validationTicker, not per message, so
-			// typing or pasting does not run a database query per frame.
+			// 独立生命周期定期复核权限，输入和粘贴不逐帧查询数据库。
+			if ctx.Err() != nil {
+				return
+			}
 			var envelope protocol.Envelope
 			switch typeOfMessage {
 			case websocket.MessageBinary:
@@ -186,7 +327,7 @@ func (h *TerminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						continue
 					}
 					pong, _ := json.Marshal(map[string]string{"type": "pong", "id": control.ID})
-					if writeErr := conn.Write(ctx, websocket.MessageText, pong); writeErr != nil {
+					if writeErr := h.writeBrowser(ctx, conn, websocket.MessageText, pong); writeErr != nil {
 						readErrors <- writeErr
 						return
 					}
@@ -209,39 +350,18 @@ func (h *TerminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-pingTicker.C:
-			if pinging {
-				continue
-			}
-			pinging = true
-			go func() {
-				pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-				defer cancel()
-				if conn.Ping(pingCtx) != nil {
-					pingFailed <- struct{}{}
-				}
-				pingDone <- struct{}{}
-			}()
-		case <-pingDone:
-			pinging = false
-		case <-pingFailed:
-			// A peer that ignores pings will not answer a close handshake either.
-			_ = conn.CloseNow()
-			return
-		case <-validationTicker.C:
-			if h.ValidateGrant != nil && !h.ValidateGrant(ctx, item.grant) {
-				_ = conn.Close(websocket.StatusPolicyViolation, "permission revoked")
-				return
-			}
 		case <-readErrors:
 			return
-		case envelope := <-events:
+		case envelope, ok := <-events:
+			if !ok || ctx.Err() != nil {
+				return
+			}
 			switch envelope.Type {
 			case protocol.MessageStreamData:
 				if envelope.StreamData == nil {
 					continue
 				}
-				if err := conn.Write(ctx, websocket.MessageBinary, envelope.StreamData.Data); err != nil {
+				if err := h.writeBrowser(ctx, conn, websocket.MessageBinary, envelope.StreamData.Data); err != nil {
 					return
 				}
 			case protocol.MessageStreamClose:
@@ -249,7 +369,7 @@ func (h *TerminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if envelope.StreamClose != nil && envelope.StreamClose.Reason != "" {
 					reason = envelope.StreamClose.Reason
 				}
-				_ = conn.Close(websocket.StatusNormalClosure, reason)
+				closeBrowser(conn, websocket.StatusNormalClosure, reason, h.writeTimeout())
 				return
 			}
 		}

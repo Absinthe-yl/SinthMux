@@ -125,6 +125,10 @@ func refreshAndSave(settings *config.Connector, logger *slog.Logger) {
 // run keeps one connector connection. Paired devices also check hourly whether
 // their certificate needs renewal, because a connection can outlive it.
 func run(parent context.Context, settings *config.Connector, refresh bool, logger *slog.Logger, notices *notifier) error {
+	return runWithRPC(parent, settings, refresh, logger, notices, processRPCSlots, handleRPC)
+}
+
+func runWithRPC(parent context.Context, settings *config.Connector, refresh bool, logger *slog.Logger, notices *notifier, slots chan struct{}, execute func(context.Context, protocol.Envelope) protocol.Envelope) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	headers, err := connectHeaders(ctx, *settings)
@@ -158,16 +162,25 @@ func run(parent context.Context, settings *config.Connector, refresh bool, logge
 		case readErrors <- err:
 		default:
 		}
+		cancel()
 	}
 	if notices != nil {
 		go notices.publish(ctx, func(snapshot protocol.NotificationSnapshot) error {
 			return send(protocol.Envelope{Version: protocol.Version, Type: protocol.MessageNotifications, Notifications: &snapshot})
 		})
 	}
-	// RPCs run concurrently so a slow tmux command or a large transfer never
-	// blocks terminal input arriving on the same connection.
-	rpcSlots := make(chan struct{}, 8)
-	go func() {
+	rpcs := newRPCDispatcher(ctx, slots, send, execute, fail)
+	var connectionWorkers sync.WaitGroup
+	defer func() {
+		cancel()
+		_ = connection.CloseNow()
+		streams.closeAll()
+		// 仅回收连接级协程。RPC 可能卡在不可取消的 OS I/O，不能阻止重连；
+		// 它们继续占用进程共享槽位，直到执行及旧连接的回包处理结束。
+		connectionWorkers.Wait()
+		<-rpcs.writerDone
+	}()
+	connectionWorkers.Go(func() {
 		for {
 			messageType, payload, err := connection.Read(ctx)
 			if err != nil {
@@ -183,17 +196,10 @@ func run(parent context.Context, settings *config.Connector, refresh bool, logge
 			}
 			switch envelope.Type {
 			case protocol.MessageRPCRequest:
-				select {
-				case rpcSlots <- struct{}{}:
-				case <-ctx.Done():
+				if err := rpcs.dispatch(envelope); err != nil {
+					fail(err)
 					return
 				}
-				go func(envelope protocol.Envelope) {
-					defer func() { <-rpcSlots }()
-					if err := send(handleRPC(ctx, envelope)); err != nil {
-						fail(err)
-					}
-				}(envelope)
 			case protocol.MessageStreamOpen:
 				streams.open(envelope.StreamOpen)
 				// Opening a session in the browser means the user has seen it.
@@ -210,13 +216,13 @@ func run(parent context.Context, settings *config.Connector, refresh bool, logge
 				}
 			}
 		}
-	}()
+	})
 
 	// Writes into a dead TCP path still succeed (they only fill the socket
 	// buffer), so the heartbeat alone cannot tell that the Hub is gone. A
 	// WebSocket ping must be answered; without a pong the connection is
 	// dropped and the outer loop reconnects.
-	go func() {
+	connectionWorkers.Go(func() {
 		pings := time.NewTicker(hubPingInterval)
 		defer pings.Stop()
 		for {
@@ -233,7 +239,7 @@ func run(parent context.Context, settings *config.Connector, refresh bool, logge
 				return
 			}
 		}
-	}()
+	})
 
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
@@ -241,6 +247,13 @@ func run(parent context.Context, settings *config.Connector, refresh bool, logge
 	defer renewal.Stop()
 	for {
 		select {
+		case <-ctx.Done():
+			select {
+			case err := <-readErrors:
+				return err
+			default:
+				return ctx.Err()
+			}
 		case err := <-readErrors:
 			return err
 		case <-renewal.C:
@@ -252,6 +265,92 @@ func run(parent context.Context, settings *config.Connector, refresh bool, logge
 				return err
 			}
 		}
+	}
+}
+
+const (
+	rpcConcurrency       = 8
+	rpcOverloadQueueSize = 8
+)
+
+// 跨 run 共享，旧连接残留的不可取消 I/O 也计入 8 个在途 RPC 的上限。
+var processRPCSlots = make(chan struct{}, rpcConcurrency)
+
+type rpcDispatcher struct {
+	ctx        context.Context
+	slots      chan struct{}
+	overload   chan protocol.Envelope
+	send       func(protocol.Envelope) error
+	execute    func(context.Context, protocol.Envelope) protocol.Envelope
+	fail       func(error)
+	workers    sync.WaitGroup
+	writerDone chan struct{}
+}
+
+func newRPCDispatcher(ctx context.Context, slots chan struct{}, send func(protocol.Envelope) error, execute func(context.Context, protocol.Envelope) protocol.Envelope, fail func(error)) *rpcDispatcher {
+	d := &rpcDispatcher{
+		ctx: ctx, slots: slots,
+		overload: make(chan protocol.Envelope, rpcOverloadQueueSize),
+		send:     send, execute: execute, fail: fail,
+		writerDone: make(chan struct{}),
+	}
+	// 仅这个 writer 发送过载响应；读循环不等待 writeMu 或网络写入。
+	go func() {
+		defer close(d.writerDone)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case response := <-d.overload:
+				if ctx.Err() != nil {
+					return
+				}
+				if err := send(response); err != nil {
+					fail(err)
+					return
+				}
+			}
+		}
+	}()
+	return d
+}
+
+func (d *rpcDispatcher) dispatch(envelope protocol.Envelope) error {
+	if err := d.ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case d.slots <- struct{}{}:
+		d.workers.Go(func() {
+			// 正常回包发送完成前不释放槽位，最多保留 8 个在途响应。
+			defer func() { <-d.slots }()
+			if d.ctx.Err() != nil {
+				return
+			}
+			response := d.execute(d.ctx, envelope)
+			// 忽略取消的执行器返回时，丢弃旧代结果；send 也只绑定本代 ctx/连接。
+			if d.ctx.Err() != nil {
+				return
+			}
+			if err := d.send(response); err != nil {
+				d.fail(err)
+			}
+		})
+		return nil
+	default:
+	}
+	response := protocol.Envelope{
+		Version: protocol.Version, Type: protocol.MessageRPCResponse, RequestID: envelope.RequestID,
+		Response: &protocol.RPCResponse{OK: false, ErrorCode: "busy", Error: "connector RPC concurrency limit reached"},
+	}
+	select {
+	case <-d.ctx.Done():
+		return d.ctx.Err()
+	case d.overload <- response:
+		return nil
+	default:
+		// 无法有界地回包时让 run 关闭连接，不静默丢弃或增建 goroutine。
+		return fmt.Errorf("RPC 过载响应队列已满")
 	}
 }
 

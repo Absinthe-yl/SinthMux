@@ -12,7 +12,7 @@
 - `pkg/protocol/messages.go`：现行 `Version = 1`、消息类型、`Envelope`、RPC 和 stream 结构，以及会话名校验。
 - `internal/relay/connector_handler.go`：验证 Connector，处理 hello / heartbeat / RPC 回包 / stream 事件，并更新 `devices.Registry`。
 - `internal/relay/manager.go`：按 device ID 管理单个活动连接；关联等待中的 RPC 与终端 stream，断线时通知等待者。RPC 默认 10 秒超时。
-- `internal/relay/terminal.go`：签发并消费票据，打开 stream，转发输入、输出和 resize，周期性检查权限。
+- `internal/relay/terminal.go`：签发并消费票据，打开 stream，转发输入、输出和 resize。浏览器写入默认限时 5 秒；独立 goroutine 每 2 秒复核权限，查询默认 2 秒期限并 fail closed，不受慢消费者主循环阻塞。撤权取消流并尝试送达 1008，100ms 内仍无法完成则硬关闭底层传输，因此不保证慢连接收到关闭码。此周期不是端到端严格两秒上限，仍包含查询与调度延迟。
 - `apps/connector/main.go`、`tmux.go`、`terminal.go`：协议另一端，执行 RPC 与 PTY 操作。
 
 ## 第一档扩展（2026-10）
@@ -20,7 +20,7 @@
 - 能力位（`protocol.Capability*`）：`file.upload.v1`（全平台）、`terminal.export.v1` 与 `session.notify.v1`（仅 Unix，`platform_*.go` 的 `extendedTmux`）。Hub 用 `devices.Registry.HasCapability` 判断，缺失返回 501。
 - RPC：`file.upload.begin/chunk/commit/abort`、`terminal.export.begin/read/close`、`session.notify.clear`，参数在 `RPCRequest.Transfer`，结果在 `RPCResponse.Transfer`；单块 ≤ `TransferChunkSize`（32 KiB）。Hub 端窗口 4 并发（`apps/hub/transfer.go`）。
 - 消息 `connector.notifications`：Connector → Hub 的全量提醒快照，连接建立时和变化时发送，Hub 存入 Registry，`/api/v1/devices` 返回。
-- Connector 的 RPC 并发执行（信号量 8），不会阻塞同连接上的终端输入。
+- Connector 使用跨重连代际共享的 8 槽 RPC gate。读循环非阻塞获取槽，过载返回 `busy`；响应通过容量 8 的队列和独立 writer 发送，队列满则断开，防止无限堆积。取消连接不等待不响应 context 的文件 I/O，遗留执行器仍占原槽并丢弃旧响应；若 8 槽都被不可取消 I/O 占满，后续 RPC 持续 busy，需要处理设备环境。同步 PTY 操作仍可能独立阻塞读循环，不宣称所有终端阻塞问题均已解决。
 
 ## 消息流
 
@@ -37,4 +37,4 @@
 
 ## 主要测试
 
-`internal/relay/manager_test.go` 覆盖 RPC 正常、离线、超时、无效回包和重复 ID；`terminal_test.go` 覆盖票据单次使用、浏览器 session 绑定和流断开。协议修改时也检查 `apps/connector/*_test.go`。
+`internal/relay/manager_test.go` 覆盖 RPC 正常、离线、超时、无效回包和重复 ID；`terminal_test.go` 覆盖票据单次使用、浏览器 session 绑定、慢浏览器写超时、慢写撤权、验证查询超时、正常 ping/关闭和流断开；`apps/connector/main_test.go` 覆盖 RPC 过载、取消、跨代共享限额及恢复。协议修改时也检查 `apps/connector/*_test.go`。
