@@ -1,7 +1,11 @@
 :80 {
 	@backend path /api/* /ws/* /health /install/* /downloads/*
 	handle @backend {
-		reverse_proxy hub:8080
+		reverse_proxy hub:8080 {
+			# Replace client-supplied values; only this proxy may assert the IP.
+			header_up X-Sinthmux-Proxy-Secret "{$SINTHMUX_PROXY_SECRET:}"
+			header_up X-Sinthmux-Client-IP {remote_host}
+		}
 	}
 	handle {
 		root * /srv

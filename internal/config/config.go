@@ -12,6 +12,7 @@ type Hub struct {
 	GithubClientSecret  string
 	AuthBrokerURL       string
 	AuthBrokerPublicKey string
+	ProxySecret         string
 }
 
 type Connector struct {
@@ -36,6 +37,7 @@ func HubFromEnv() Hub {
 		GithubClientSecret:  os.Getenv("SINTHMUX_GITHUB_CLIENT_SECRET"),
 		AuthBrokerURL:       os.Getenv("SINTHMUX_AUTH_BROKER_URL"),
 		AuthBrokerPublicKey: os.Getenv("SINTHMUX_AUTH_BROKER_PUBLIC_KEY"),
+		ProxySecret:         os.Getenv("SINTHMUX_PROXY_SECRET"),
 	}
 }
 

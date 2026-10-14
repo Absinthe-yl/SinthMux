@@ -29,6 +29,7 @@ services:
       SINTHMUX_GITHUB_CLIENT_SECRET: ${SINTHMUX_GITHUB_CLIENT_SECRET:-}
       SINTHMUX_AUTH_BROKER_URL: ${SINTHMUX_AUTH_BROKER_URL:-}
       SINTHMUX_AUTH_BROKER_PUBLIC_KEY: ${SINTHMUX_AUTH_BROKER_PUBLIC_KEY:-}
+      SINTHMUX_PROXY_SECRET: ${SINTHMUX_PROXY_SECRET:?run scripts/ensure-proxy-secret.sh with your Compose env file}
     ports:
       - "127.0.0.1:8090:8080"
     depends_on:
@@ -40,6 +41,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/web.Dockerfile
+    environment:
+      SINTHMUX_PROXY_SECRET: ${SINTHMUX_PROXY_SECRET:?run scripts/ensure-proxy-secret.sh with your Compose env file}
     ports:
       - "${SINTHMUX_WEB_BIND_ADDRESS:-127.0.0.1}:5173:80"
     depends_on:

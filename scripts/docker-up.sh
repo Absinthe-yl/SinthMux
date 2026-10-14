@@ -20,6 +20,8 @@ compose_env=deploy/.env.local
 if [[ ! -f "$compose_env" ]]; then
   printf 'SINTHMUX_COMPOSE_DB_PASSWORD=%s\n' "$(openssl rand -hex 24)" > "$compose_env"
 fi
+# Upgrade existing installs too, without replacing database credentials.
+./scripts/ensure-proxy-secret.sh "$compose_env"
 compose=(docker compose --env-file "$compose_env" -f deploy/docker-compose.yml)
 
 "${compose[@]}" up -d --build

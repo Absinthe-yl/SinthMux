@@ -13,8 +13,11 @@
 服务器上没有其他 Web 服务时，可叠加 `deploy/docker-compose.public.yml`：Web 容器的 Caddy 改用 `deploy/Caddyfile.public` 监听 80/443 并自动申请 Let's Encrypt 证书，Hub 不再映射宿主机端口。`deploy/.env.local` 需设置 `SINTHMUX_SITE`（域名列表或公网 IP）和 `SINTHMUX_PUBLIC_URL`；仅用 IP 访问时还需 `SINTHMUX_ACME_PROFILE=shortlived`，Let's Encrypt 只给 IP 签 6 天短期证书，由 Caddy 自动续期。
 
 ```bash
+./scripts/ensure-proxy-secret.sh deploy/.env.local
 docker compose --env-file deploy/.env.local -f deploy/docker-compose.yml -f deploy/docker-compose.public.yml up -d --build
 ```
+
+`ensure-proxy-secret.sh` 对既有环境文件幂等追加随机 `SINTHMUX_PROXY_SECRET`，不替换其他凭据。Compose 要求此项非空，同时传给 Hub 和 Web；Caddy 覆盖私有代理凭据及客户端 IP 头，Hub 验证后才按该 IP 限流。未配置的源码直连模式、伪造或不合法代理头均回退实际连接地址。不要把此密钥写入访问日志；多层代理信任需另外配置。
 
 同一台服务器上的其他站点（如项目官网）可共用这个 80/443 入口：Caddyfile.public 会导入 `SINTHMUX_EXTRA_SITES_DIR`（默认 `deploy/sites.d/`）下的 `*.caddy` 站点块，被代理的容器需加入 `deploy_default` 网络，详见 `deploy/sites.d/README.md`。
 
@@ -36,6 +39,9 @@ git -c http.proxy=socks5h://127.0.0.1:7897 -c http.version=HTTP/1.1 push origin 
 | --- | --- |
 | Go 模块 | `go test ./...`；相关包的 `*_test.go` |
 | Web 类型 | `npm --prefix apps/web run typecheck` |
+| Web 请求及输入回归 | `npm --prefix apps/web test`，不连接实际后端 |
+| 账号生命周期浏览器回归 | `npm --prefix apps/web run test:browser`；需要可用 Chrome 与 playwright-core，非默认路径通过 `CHROME_BIN`、`PLAYWRIGHT_MODULE` 指定；接口均为内存模拟 |
+| 代理限流及配置迁移 | `go test ./internal/auth ./internal/config`；不设置测试库时仅跑非数据库测试 |
 | Go 与 Web 构建 | `make build` |
 | 全仓基本检查 | `make test`，运行 Go 测试和 Web 类型检查 |
 | PostgreSQL 认证链路 | 设置 `SINTHMUX_TEST_DATABASE_URL` 后运行 `go test ./internal/auth -run TestFormalStoreIntegration`；未设置时该测试会跳过 |

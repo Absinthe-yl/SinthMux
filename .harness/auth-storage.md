@@ -23,7 +23,8 @@ Hub 只有在 `SINTHMUX_DATABASE_URL` 非空时才创建 `auth.Server`。`intern
 
 - `Server.Require` 从 `sinthmux_session` Cookie 取得 Web session；写操作还检查 Origin 与 `X-Sinthmux-CSRF`。前端 `api.ts` 从 `/api/v1/auth/me` 获取 CSRF 并在写请求带上。
 - `Server.Device` 根据设备所属空间和成员角色检查操作权限。`Store.Allowed` 是动作与角色的集中矩阵：viewer 仅列会话；operator 可输入、创建和重命名；owner/admin 另可关闭会话、管理设备、查看审计。成员与空间管理另有 owner 权限检查。
-- 终端连接不只依赖签发票据时的权限：`relay.TerminalHandler` 将票据绑定当前浏览器 session，并通过 `Store.TerminalAllowed` 在连接过程中每 2 秒复核可输入权限（不按消息逐条查库）；撤权后 2 秒内以 1008 关闭现有连接。
+- 终端连接不只依赖签发票据时的权限：`relay.TerminalHandler` 将票据绑定当前浏览器 session，并通过独立 goroutine 每 2 秒调用 `Store.TerminalAllowed` 复核可输入权限（不按消息逐条查库）。查询默认 2 秒超时并 fail closed；失败时取消流，尝试送达 1008，慢连接可直接硬关闭。复核周期不是包含查询、调度及关闭耗时的严格两秒上限。
+- `internal/auth/proxy.go`：只有配置 `SINTHMUX_PROXY_SECRET` 且私有代理凭据匹配、IP 合法时，登录限流才使用 Caddy 断言的客户端地址；否则使用实际连接地址，不直接信任公开转发头。代理密钥由部署脚本生成，不用于用户授权。
 - 设备代理使用与用户登录令牌不同的设备凭据：Hub 签发、URI SAN 绑定 `spaceId/deviceId` 的短期证书，加每次握手对一次性 nonce 的签名。签名内容包含用途、Hub 主机名和设备 ID，nonce 只能用一次。证书本身不足以认证：每次连接还要求数据库中设备未吊销且公钥指纹一致，所以吊销立即生效，不需要 CRL。配对码在事务中一次性消费；设备吊销后 Hub 也主动断开在线连接。
 
 ## 变更检查

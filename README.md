@@ -113,6 +113,18 @@ Hub 镜像会打包 `deploy/bundles/` 中的 tmux。构建镜像前在一台 Mac
 
 默认配置绑定 `127.0.0.1`。对外提供服务时，需要自行准备 DNS、HTTPS 证书和反向代理，并确保 `SINTHMUX_PUBLIC_URL` 是浏览器与设备都能访问的地址。设备代理在本机生成私钥，配对后获得 Hub 签发的 24 小时设备证书，每次连接用私钥签名一次性挑战；证书可经过反向代理，无需透传 TLS。设备 CA 私钥保存在数据库中，请通过 HTTPS/WSS 暴露服务并妥善保护 Hub 和数据库及其备份。
 
+### 代理后的登录限流
+
+Docker 启动脚本会自动生成 `SINTHMUX_PROXY_SECRET`，让 Caddy 和 Hub 共享同一份随机密钥。Caddy 覆盖客户端传入的私有代理头，用实际连接 IP 作限流依据；Hub 不直接信任 `X-Forwarded-For` 等公开头。密钥只用于代理身份断言，不是用户或设备凭据，不应公开，也不要记录到访问日志。
+
+已有部署如果直接用 Compose 更新，先执行下面的迁移（环境文件换成部署实际使用的那份），再用原来的 Compose 文件组合重建 **Hub 和 Web**；公网部署必须保留 `docker-compose.public.yml`，不要改用仅本机的启动命令：
+
+```bash
+./scripts/ensure-proxy-secret.sh deploy/.env.local
+```
+
+迁移只在缺失时追加密钥，不替换数据库密码；Compose 缺少该配置时会拒绝启动并提示迁移。源码直连 Hub 可以不设置密钥，此时所有转发 IP 头均被忽略。自配代理需与 Hub 共享 `openssl rand -hex 32` 生成的值，并覆盖 `X-Sinthmux-Proxy-Secret` 和 `X-Sinthmux-Client-IP`；后者必须使用代理的实际连接 IP，不能照抄客户端请求头。多层代理/CDN 的真实 IP 信任链需另行配置，不会自动信任。
+
 ## 常见问题
 
 **关闭网页会结束终端里的任务吗？** 不会。任务在目标机器的 tmux 会话中运行；重新打开网页并进入该会话即可继续。显式关闭 tmux 会话会结束其中的程序。

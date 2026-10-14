@@ -81,6 +81,10 @@ func main() {
 			logger.Error("SINTHMUX_AUTH_BROKER_URL and SINTHMUX_AUTH_BROKER_PUBLIC_KEY must form a valid login broker configuration")
 			os.Exit(1)
 		}
+		if err := authServer.SetProxySecret(settings.ProxySecret); err != nil {
+			logger.Error("SINTHMUX_PROXY_SECRET must be a 32-byte hex secret shared only with the reverse proxy")
+			os.Exit(1)
+		}
 		authServer.OnDeviceRevoked = func(id string) { manager.Revoke(id); registry.Disconnect(id) }
 		ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
 		err = authServer.LoadDeviceAuthority(ctx)

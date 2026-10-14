@@ -14,7 +14,7 @@ import (
 
 func (s *Server) brokerStart(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if !s.rateLimit(r.RemoteAddr) {
+	if !s.rateLimit(s.clientAddress(r)) {
 		respond(w, 429, map[string]string{"error": "too many attempts"})
 		return
 	}

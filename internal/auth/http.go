@@ -37,6 +37,7 @@ type Server struct {
 	states          map[string]OAuthState
 	attempts        map[string][]time.Time
 	nonces          map[string]time.Time
+	proxySecret     string // Set once at startup; never exposed to clients or logs.
 }
 
 type contextKey int
@@ -237,7 +238,7 @@ func (s *Server) tokenLogin(w http.ResponseWriter, r *http.Request) {
 		respond(w, 403, map[string]string{"error": "origin denied"})
 		return
 	}
-	if !s.rateLimit(r.RemoteAddr) {
+	if !s.rateLimit(s.clientAddress(r)) {
 		respond(w, 429, map[string]string{"error": "too many attempts"})
 		return
 	}
@@ -593,7 +594,7 @@ func (s *Server) createDevicePairing(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) redeemDevicePairing(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimit(r.RemoteAddr) {
+	if !s.rateLimit(s.clientAddress(r)) {
 		respond(w, 429, map[string]string{"error": "too many attempts"})
 		return
 	}
@@ -660,7 +661,7 @@ func (s *Server) githubStart(w http.ResponseWriter, r *http.Request) {
 		respond(w, 503, map[string]string{"error": "GitHub login not configured"})
 		return
 	}
-	if !s.rateLimit(r.RemoteAddr) {
+	if !s.rateLimit(s.clientAddress(r)) {
 		respond(w, 429, map[string]string{"error": "too many attempts"})
 		return
 	}
