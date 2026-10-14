@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 import { BellOff, ListChecks, Pencil, Pin, PinOff, Plus, Terminal, Trash2 } from "lucide-react";
 import ActionDialog from "./ActionDialog";
-import { request } from "./api";
+import { useAPI } from "./QueryScope";
+import type { APIClient } from "./api";
 import { deviceInstallOS, installCommand } from "./installCommand";
 
 export type TmuxSession = { name: string; windows: number; attached: boolean; createdAt: number };
@@ -16,10 +17,11 @@ export function sessionsPath(deviceId: string) { return `/api/v1/devices/${encod
 
 // useSessions shares one cached list per device between the device panel and the pinned section.
 export function useSessions(deviceId: string, online: boolean, enabled = true) {
-  return useQuery({ queryKey: ["sessions", deviceId], enabled, queryFn: () => request<{ sessions: TmuxSession[] }>(sessionsPath(deviceId)), retry: false, refetchInterval: online ? 10000 : false });
+  const { request } = useAPI();
+  return useQuery({ queryKey: ["sessions", deviceId], enabled, queryFn: ({ signal }) => request<{ sessions: TmuxSession[] }>(sessionsPath(deviceId), { signal }), retry: false, refetchInterval: online ? 10000 : false });
 }
 
-export function clearNotification(deviceId: string, session: string) {
+export function clearNotification(request: APIClient["request"], deviceId: string, session: string) {
   return request(`${sessionsPath(deviceId)}/${encodeURIComponent(session)}/notification`, { method: "DELETE" });
 }
 
@@ -41,6 +43,8 @@ type Props = {
 
 export default function SessionPanel({ deviceId, platform, online, canManage, canClose, canOpen, notifications, canClearNotification, pinned, onTogglePin, onRenamed, onClosed, onOpen }: Props) {
   const queryClient = useQueryClient();
+  const api = useAPI();
+  const { request } = api;
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -76,7 +80,7 @@ export default function SessionPanel({ deviceId, platform, online, canManage, ca
     }
   });
   const clear = useMutation({
-    mutationFn: (name: string) => clearNotification(deviceId, name),
+    mutationFn: (name: string) => clearNotification(request, deviceId, name),
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["devices"] }); }
   });
 
@@ -107,6 +111,7 @@ export default function SessionPanel({ deviceId, platform, online, canManage, ca
     setBatchBusy(true);
     const errors: Record<string, string> = {};
     for (const name of selected) {
+      if (!api.active) return;
       try {
         await request(`${base}/${encodeURIComponent(name)}`, { method: "DELETE" });
         onClosed(name);

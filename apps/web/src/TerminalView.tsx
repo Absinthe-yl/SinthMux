@@ -3,7 +3,8 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { ArrowLeft, CornerDownLeft, Download, Keyboard, Maximize2, Minus, Plus, RotateCw, Upload } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type PointerEvent } from "react";
-import { APIError, downloadHistory, uploadFile } from "./api";
+import { APIError } from "./api";
+import { useAPI } from "./QueryScope";
 import { insertPaths, pasteFiles } from "./paste";
 import { stateText, TerminalConnection, type ConnectionState } from "./terminalConnection";
 import { attachMobileInput } from "./mobileInput";
@@ -80,6 +81,7 @@ const keyGroups: { id: string; label: string; keys: BarKey[] }[] = [
 ];
 
 export default function TerminalView({ deviceId, deviceName, session, theme, capabilities, onBack }: { deviceId: string; deviceName: string; session: string; theme: "light" | "dark"; capabilities: string[]; onBack: () => void }) {
+  const { request, uploadFile, downloadHistory } = useAPI();
   const host = useRef<HTMLDivElement>(null);
   const page = useRef<HTMLElement>(null);
   const terminal = useRef<XTerm | null>(null);
@@ -162,10 +164,12 @@ export default function TerminalView({ deviceId, deviceName, session, theme, cap
       onOutput: (data) => term.write(data),
       onReset: () => term.reset(),
       size: () => ({ cols: term.cols, rows: term.rows })
-    });
+    }, request);
     connectionRef.current = connection;
     const send = (data: string) => {
-      if (!connection.send(data)) setTransfer("连接已断开，输入未发送");
+      const result = connection.send(data);
+      if (result === "rejected") setTransfer("连接已断开，输入未发送");
+      if (result === "partial") setTransfer("输入可能仅发送了一部分，请检查终端内容，不要整段重发");
     };
     sendRef.current = send;
     const resize = () => {
@@ -219,7 +223,7 @@ export default function TerminalView({ deviceId, deviceName, session, theme, cap
       observer.disconnect(); onInput.dispose(); detachMobileInput();
       sendRef.current = () => {}; fitRef.current = () => {}; terminal.current = null; term.dispose();
     };
-  }, [deviceId, session, canUpload]);
+  }, [deviceId, session, canUpload, request]);
 
   const uploadFiles = async (files: File[]) => {
     if (transferBusy.current) { setTransfer("上一个上传还没完成"); return; }

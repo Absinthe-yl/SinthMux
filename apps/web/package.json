@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
-    "typecheck": "tsc -b --pretty false"
+    "typecheck": "tsc -b --pretty false",
+    "test": "node --test src/__tests__/api.test.mjs src/__tests__/terminalConnection.test.mjs",
+    "test:browser": "node --test src/__tests__/identity.browser.test.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.0",

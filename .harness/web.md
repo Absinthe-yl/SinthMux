@@ -12,7 +12,8 @@ Web 位于 `apps/web/`，使用 React 19、TypeScript、Vite、React Query 和 x
 | `src/SessionPanel.tsx` | 会话查询、创建、重命名、关闭、打开；按在线状态、能力和角色显示操作 |
 | `src/TerminalView.tsx` | xterm 实例、尺寸同步、票据申请、WebSocket 连接与退避重连；字号调节、快捷键栏和命令输入框 |
 | `src/terminalKeys.ts` | 快捷键栏的按键序列：Ctrl/Alt 修饰（单次/锁定）、方向键与翻页的 xterm 转义序列 |
-| `src/api.ts` | 同源 `fetch`、Cookie、CSRF header 与 API 错误包装 |
+| `src/api.ts` | 作用域独立的 APIClient：同源请求、Cookie、CSRF、取消、错误及上传/导出 |
+| `src/QueryScope.tsx` | 独立 QueryClient/APIClient；卸载时取消请求、清空缓存，防止旧身份响应迟到 |
 | `src/styles.css` | 页面和终端样式；主题变量 |
 | `vite.config.ts` | 开发期将 `/api`、`/ws`、安装与下载路径代理到本机 Hub |
 
@@ -20,7 +21,9 @@ Web 位于 `apps/web/`，使用 React 19、TypeScript、Vite、React Query 和 x
 
 `App.tsx` 先读取 `/api/v1/system/status`，识别正式/开发模式。正式模式用 `/api/v1/auth/me` 取得用户、空间和 CSRF；设备列表按当前空间筛选。展开设备后 `SessionPanel` 查询会话，在线时定期刷新；操作成功后使 React Query 缓存失效。tmux 缺失或旧代理无法解析会话列表时，页面展示可复制的修复命令。
 
-打开会话时 `TerminalView` 先 POST 申请票据，再建立终端 WebSocket。输入以二进制发送，resize 以 JSON 文本发送；断线后重新申请票据并连接，不能重复使用旧票据。修改这段流程时对照 `internal/relay/terminal.go`。
+工作台按用户 ID、会话 CSRF 和登录生命周期建立独立作用域。真实 401 立即卸载工作台及终端并销毁账号缓存、明文 secret；同页重新登录不会继承旧数据。`me` 每 5 秒复核，临时网络错误或 5xx 保留当前工作台并继续轮询，不误当退出。成员/空间操作显式刷新外层身份查询。
+
+打开会话时 `TerminalView` 先 POST 申请票据，再建立终端 WebSocket。输入先编码为 UTF-8，再按最多 16 KiB 分块保序发送；`sent` 只表示交给 WebSocket，`partial` 表示结果不确定，均不自动重放。resize 以 JSON 文本发送；断线后重新申请票据并连接，不能重复使用旧票据。修改这段流程时对照 `internal/relay/terminal.go`。
 
 ## 手机与平板
 
@@ -30,13 +33,13 @@ Web 位于 `apps/web/`，使用 React 19、TypeScript、Vite、React Query 和 x
 
 - API 字段或权限改变：同步检查 `App.tsx`、`SessionPanel.tsx` 与 `src/api.ts`；服务端仍是权限真相。
 - 终端断线、尺寸或输入问题：先看 `TerminalView.tsx`，再看 `relay/terminal.go` 和 Connector 的 `terminal.go`。
-- 前端验证：`npm --prefix apps/web run typecheck`、`npm --prefix apps/web run build`。仓库当前没有 Web 自动化测试套件。
+- 前端验证：`npm --prefix apps/web run typecheck`、`npm --prefix apps/web test`、`npm --prefix apps/web run test:browser`、`npm --prefix apps/web run build`。`src/__tests__/` 覆盖请求取消、输入分块和真实浏览器中的身份生命周期；浏览器套件模拟后端，不能代替真实设备 E2E。
 
 ## 终端连接、上传、导出、提醒与置顶
 
-- `terminalConnection.ts`：连接状态机（票据 8 s、握手 10 s、首帧 10 s 超时；可见时每 15 s ping，6 s 无回应判死；`online`/`pageshow`/回到前台立即探测，5 s 无回应重连）。只有最新一次尝试能写终端。真正结束（1008、`terminal exited` 等）停止重连并显示“立即重连”按钮。
+- `terminalConnection.ts`：连接状态机（票据 8 s、握手 10 s、首帧 10 s 超时；可见时每 15 s ping，6 s 无回应判死；`online`/`pageshow`/回到前台立即探测，3 s 无回应重连）。只有最新一次尝试能写终端。真正结束（1008、`terminal exited` 等）停止重连并显示“立即重连”按钮。
 - 上传：`paste.ts` 的 `pasteFiles` 判定（有文件且无文本或文本等于文件名才上传，Office 图文混合按文本），`api.ts` 的 `uploadFile`（XHR 带进度）；完成后按 `bracketedPasteMode` 插入路径。拖放和工具栏按钮同一路径。
-- 导出：`api.ts` 的 `downloadHistory`，校验 `Content-Length` 后用 Blob 下载。
+- 导出：`api.ts` 的 `downloadHistory`，校验独立的 `X-Sinthmux-Export-Size`（避免压缩长度误差）后用 Blob 下载。
 - 提醒：设备列表每 5 秒轮询带回 `notifications`；设备卡角标、会话行彩色左边线和消息、标题 `(N) SinthMux`、授权后的桌面通知。
 - `prefs.ts`：按用户隔离的 localStorage（`sinthmux:v1:<userId>:pinned|expanded|space`）。置顶区复用 `useSessions` 缓存；重命名迁移置顶，关闭/批量关闭取消置顶。
 - E2E 用的 `data-testid` 见 `docs/TIER1_DESIGN.md` 第 4–8 节，修改时同步 `tests/e2e/browser.sh`。

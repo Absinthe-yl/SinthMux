@@ -1,4 +1,4 @@
-import { APIError, request } from "./api";
+import { APIError, type APIClient } from "./api";
 
 // Connection lifecycle for one terminal view: ticket → WebSocket handshake →
 // first output → live. Every phase has a deadline, a live connection is probed
@@ -19,6 +19,11 @@ export type ConnectionState =
   | { kind: "live" }
   | { kind: "retrying"; seconds: number; reason: string }
   | { kind: "stopped"; reason: string };
+
+export const maxInputFrameBytes = 16 * 1024;
+
+// sent 仅表示已交给 WebSocket，不代表远端确认；partial 绝不能整段重放。
+export type SendResult = "sent" | "rejected" | "partial";
 
 type Handlers = {
   onState: (state: ConnectionState) => void;
@@ -46,7 +51,7 @@ export class TerminalConnection {
   private live = false;
   private waitingRetry = false;
 
-  constructor(private readonly deviceId: string, private readonly session: string, private readonly handlers: Handlers) {
+  constructor(private readonly deviceId: string, private readonly session: string, private readonly handlers: Handlers, private readonly request: APIClient["request"]) {
     window.addEventListener("online", this.probeNow);
     window.addEventListener("pageshow", this.probeNow);
     document.addEventListener("visibilitychange", this.onVisibility);
@@ -56,6 +61,7 @@ export class TerminalConnection {
 
   dispose() {
     this.disposed = true;
+    this.live = false;
     this.clearTimers();
     this.ticketAbort?.abort();
     window.removeEventListener("online", this.probeNow);
@@ -67,16 +73,33 @@ export class TerminalConnection {
 
   get isLive() { return this.live; }
 
-  send(data: string | Uint8Array): boolean {
-    if (!this.live || this.socket?.readyState !== WebSocket.OPEN) return false;
-    this.socket.send(typeof data === "string" ? new TextEncoder().encode(data) : data);
-    return true;
+  send(data: string | Uint8Array): SendResult {
+    const socket = this.socket;
+    if (this.disposed || !this.live || socket?.readyState !== WebSocket.OPEN) return "rejected";
+    // 先编码再分块：UTF-8 字符与 bracketed paste 标记均按原始字节流保序。
+    const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
+    let sent = 0;
+    try {
+      for (; sent < bytes.byteLength; sent += maxInputFrameBytes) {
+        if (socket.readyState !== WebSocket.OPEN) {
+          this.fail("发送中断，请检查终端内容后再输入");
+          return sent === 0 ? "rejected" : "partial";
+        }
+        socket.send(bytes.subarray(sent, sent + maxInputFrameBytes));
+      }
+    } catch {
+      this.fail("发送中断，请检查终端内容后再输入");
+      // 抛错时保守视为结果不确定，不能据此自动重放输入。
+      return "partial";
+    }
+    return "sent";
   }
 
   resize() {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     const { cols, rows } = this.handlers.size();
-    this.socket.send(JSON.stringify({ type: "resize", cols, rows }));
+    try { this.socket.send(JSON.stringify({ type: "resize", cols, rows })); }
+    catch { this.fail("连接已断开"); }
   }
 
   // Reconnect at once, also after the session was reported as ended.
@@ -146,7 +169,7 @@ export class TerminalConnection {
     let ticket: string;
     try {
       const path = `/api/v1/devices/${encodeURIComponent(this.deviceId)}/sessions/${encodeURIComponent(this.session)}/ticket`;
-      ({ ticket } = await request<{ ticket: string }>(path, { method: "POST", signal: abort.signal }));
+      ({ ticket } = await this.request<{ ticket: string }>(path, { method: "POST", signal: abort.signal }));
     } catch (error) {
       if (!current()) return;
       if (error instanceof APIError && error.status === 401) return this.stop("登录已过期，请刷新页面重新登录");
@@ -167,6 +190,7 @@ export class TerminalConnection {
       if (!current()) return;
       this.clearTimers();
       this.resize();
+      if (!current()) return;
       // tmux redraws the whole screen on attach, so silence means a stuck path.
       this.timer(timings.firstByte, () => { if (current() && !gotOutput) this.fail("终端没有响应"); });
     };
@@ -206,7 +230,8 @@ export class TerminalConnection {
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     const sentAt = Date.now();
-    socket.send(JSON.stringify({ type: "ping", id: String(++this.pingSeq) }));
+    try { socket.send(JSON.stringify({ type: "ping", id: String(++this.pingSeq) })); }
+    catch { this.fail("连接已断开"); return; }
     this.timer(within, () => {
       if (current() && this.live && this.lastReceived < sentAt) this.fail("连接无响应，正在重连", true);
     });

@@ -1,7 +1,8 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { Bell, ChevronDown, ChevronUp, Laptop, Moon, Pin, PinOff, RefreshCw, Server, Sun } from "lucide-react";
 import { FormEvent, lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { request, setCSRF } from "./api";
+import { QueryScope, useAPI } from "./QueryScope";
+import { APIError } from "./api";
 import { guessInstallOS, installCommand, installOSOptions, type InstallOS } from "./installCommand";
 import ActionDialog from "./ActionDialog";
 import SessionPanel, { useSessions, type SessionNotification } from "./SessionPanel";
@@ -75,11 +76,9 @@ function markTokenSaved() {
   try { localStorage.setItem(tokenSavedKey, "1"); } catch { /* ignore */ }
 }
 
-async function getJSON<T>(path: string): Promise<T> {
-  return request<T>(path);
-}
-
 function Login({ githubEnabled, theme, onToggleTheme, onLogin }: { githubEnabled: boolean; theme: Theme; onToggleTheme: () => void; onLogin: () => void }) {
+  const api = useAPI();
+  const { request } = api;
   const [showToken, setShowToken] = useState(true);
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
@@ -95,6 +94,7 @@ function Login({ githubEnabled, theme, onToggleTheme, onLogin }: { githubEnabled
       if ("PasswordCredential" in window) {
         try { await navigator.credentials.store(new (window as unknown as { PasswordCredential: new (data: { id: string; password: string; name: string }) => Credential }).PasswordCredential({ id: `SinthMux · ${location.host}`, password: token.trim(), name: "SinthMux 登录令牌" })); } catch { /* the browser may decline */ }
       }
+      if (!api.active) return;
       markTokenSaved();
       setToken(""); onLogin();
     }
@@ -185,9 +185,72 @@ function dialogText(action: DialogAction): { title: string; description?: string
   }
 }
 
+type ShellProps = { status: UseQueryResult<Status, Error>; theme: Theme; setTheme: (theme: Theme) => void };
+
+function Topbar({ status, theme, setTheme, userName }: ShellProps & { userName?: string }) {
+  const hubOnline = !status.isError && status.data?.status === "ok";
+  return <header className="topbar"><div className="topbar-inner">
+    <a className="brand" href="#top" aria-label="SinthMux 首页"><img className="brand-mark" src="/sinthmux-mark-transparent.png?v=3" alt="" /><strong>SinthMux</strong></a>
+    <div className="top-actions">{userName && <span className="user-name">{userName}</span>}<span className="hub-status"><span className={`status-dot${hubOnline ? " online" : ""}`} />Hub {hubOnline ? "在线" : status.isError ? "离线" : "连接中"}</span><button className="icon-button" type="button" title={theme === "dark" ? "切换浅色模式" : "切换深色模式"} aria-label={theme === "dark" ? "切换浅色模式" : "切换深色模式"} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? <Sun /> : <Moon />}</button></div>
+  </div></header>;
+}
+
+function PendingWorkspace(props: ShellProps) {
+  return <div className="app-frame"><Topbar {...props} /><main className="shell"><div className="empty-state"><Server /><strong>正在加载设备</strong></div></main></div>;
+}
+
 export default function App() {
-  const queryClient = useQueryClient();
+  return <QueryScope><AppShell /></QueryScope>;
+}
+
+function AppShell() {
+  const { request } = useAPI();
   const [theme, setTheme] = useState<Theme>(initialTheme);
+  const [loginEpoch, setLoginEpoch] = useState(0);
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem("sinthmux-theme", theme); } catch { /* 本次访问仍可切换主题。 */ }
+  }, [theme]);
+  const status = useQuery({ queryKey: ["status"], queryFn: ({ signal }) => request<Status>("/api/v1/system/status", { signal }), refetchInterval: 5000 });
+  const props = { status, theme, setTheme };
+  if (status.data?.authMode === "development") return <QueryScope key="development"><Workspace {...props} /></QueryScope>;
+  if (status.data?.authMode !== "formal") return <PendingWorkspace {...props} />;
+  return <QueryScope key={`formal:${loginEpoch}`}><AuthenticatedShell {...props} onLogin={() => { setLoginEpoch((epoch) => epoch + 1); void status.refetch(); }} /></QueryScope>;
+}
+
+function AuthenticatedShell({ onLogin, ...props }: ShellProps & { onLogin: () => void }) {
+  const api = useAPI();
+  const queryClient = useQueryClient();
+  const [expired, setExpired] = useState(false);
+  const expire = () => {
+    api.dispose();
+    queryClient.clear();
+    setExpired(true);
+  };
+  const me = useQuery({
+    queryKey: ["me"], enabled: !expired, retry: false, refetchInterval: 5000,
+    queryFn: async ({ signal }) => {
+      try { return await api.request<Me>("/api/v1/auth/me", { signal }); }
+      catch (error) {
+        if (!signal.aborted && api.active && error instanceof APIError && error.status === 401) expire();
+        throw error;
+      }
+    }
+  });
+  // 临时网络/服务故障保留已有身份；首次无数据则等待下一次轮询恢复。
+  if (expired) return <QueryScope key="login"><Login githubEnabled={props.status.data?.githubLoginEnabled ?? false} theme={props.theme} onToggleTheme={() => props.setTheme(props.theme === "dark" ? "light" : "dark")} onLogin={onLogin} /></QueryScope>;
+  if (!me.data) return <PendingWorkspace {...props} />;
+  // CSRF 在服务端按会话生成；同一账号的新会话也必须重建工作台。
+  return <QueryScope key={JSON.stringify([me.data.user.id, me.data.csrf])} csrf={me.data.csrf} onUnauthorized={expire}>
+    <Workspace {...props} identity={me.data} refreshIdentity={async () => { if (api.active) await me.refetch(); }} onLogout={expire} />
+  </QueryScope>;
+}
+
+function Workspace({ status, theme, setTheme, identity, refreshIdentity, onLogout }: ShellProps & { identity?: Me; refreshIdentity?: () => Promise<void>; onLogout?: () => void }) {
+  const queryClient = useQueryClient();
+  const api = useAPI();
+  const { request } = api;
+  const me = { data: identity };
   const [activeTerminal, setActiveTerminal] = useState<{ deviceId: string; deviceName: string; session: string; capabilities: string[] } | null>(null);
   const [notice, setNotice] = useState("");
   const [secret, setSecret] = useState<{ label: string; value: string; hint?: string; install?: { hub: string; code: string; os: InstallOS } } | null>(null);
@@ -200,25 +263,17 @@ export default function App() {
   const [dialogRole, setDialogRole] = useState<Exclude<Space["role"], "owner">>("operator");
   const [dialogError, setDialogError] = useState("");
   const [dialogBusy, setDialogBusy] = useState(false);
-  useLayoutEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    try { localStorage.setItem("sinthmux-theme", theme); } catch { /* Theme still works for this visit. */ }
-  }, [theme]);
-
-  const status = useQuery({ queryKey: ["status"], queryFn: () => getJSON<Status>("/api/v1/system/status"), refetchInterval: 5000 });
-  const formal = status.data?.authMode === "formal";
-  const me = useQuery({ queryKey: ["me"], enabled: formal, retry: false, queryFn: async () => { const result = await getJSON<Me>("/api/v1/auth/me"); setCSRF(result.csrf); return result; } });
-  const devices = useQuery({ queryKey: ["devices"], enabled: status.data?.authMode === "development" || (formal && !!me.data), queryFn: () => getJSON<{ devices: Device[] }>("/api/v1/devices"), refetchInterval: 5000 });
+  const formal = !!identity;
+  const devices = useQuery({ queryKey: ["devices"], queryFn: ({ signal }) => request<{ devices: Device[] }>("/api/v1/devices", { signal }), refetchInterval: 5000 });
   const userKey = formal ? me.data?.user.id : "dev";
   const [selectedSpace, setSelectedSpace] = usePref<string | null>(userKey, "space", null);
   const [expanded, setExpanded] = usePref<string[]>(userKey, "expanded", []);
   const [pins, setPins] = usePref<string[]>(userKey, "pinned", []);
   const activeSpace = me.data?.spaces.find((space) => space.id === selectedSpace) ?? me.data?.spaces[0];
   const spaceSelect = useFitSelect();
-  const members = useQuery({ queryKey: ["members", activeSpace?.id], enabled: formal && showMembers && !!activeSpace, queryFn: () => request<{ members: Member[] }>(`/api/v1/spaces/${activeSpace!.id}/members`) });
-  const tokens = useQuery({ queryKey: ["tokens"], enabled: formal && showTokens && !!me.data, queryFn: () => request<{ tokens: LoginToken[] }>("/api/v1/auth/tokens") });
+  const members = useQuery({ queryKey: ["members", activeSpace?.id], enabled: formal && showMembers && !!activeSpace, queryFn: ({ signal }) => request<{ members: Member[] }>(`/api/v1/spaces/${activeSpace!.id}/members`, { signal }) });
+  const tokens = useQuery({ queryKey: ["tokens"], enabled: formal && showTokens && !!me.data, queryFn: ({ signal }) => request<{ tokens: LoginToken[] }>("/api/v1/auth/tokens", { signal }) });
   const items = (devices.data?.devices ?? []).filter((device) => !formal || device.spaceId === activeSpace?.id);
-  const hubOnline = !status.isError && status.data?.status === "ok";
   const deviceById = new Map((devices.data?.devices ?? []).map((device) => [device.id, device]));
   const visiblePins = pins.filter((pin) => { const device = deviceById.get(splitPin(pin).deviceId); return !formal || !device || device.spaceId === activeSpace?.id; });
   const pinActions: PinProps = {
@@ -233,12 +288,18 @@ export default function App() {
   const openTerminal = (device: Device, session: string) => {
     setActiveTerminal({ deviceId: device.id, deviceName: device.name, session, capabilities: device.capabilities ?? [] });
     // The connector clears the notification when the session is opened; refresh soon after.
-    if (device.notifications?.some((item) => item.session === session)) setTimeout(() => { void queryClient.invalidateQueries({ queryKey: ["devices"] }); }, 1500);
+    if (device.notifications?.some((item) => item.session === session)) setTimeout(() => { if (api.active) void queryClient.invalidateQueries({ queryKey: ["devices"] }); }, 1500);
   };
 
   // Notifications: count in the tab title, and a desktop notification for new ones.
   const allNotices = (devices.data?.devices ?? []).flatMap((device) => (device.notifications ?? []).map((item) => ({ ...item, device })));
   const seenNotices = useRef<Map<string, number> | null>(null);
+  const desktopNotices = useRef(new Set<Notification>());
+  useEffect(() => () => {
+    document.title = "SinthMux";
+    for (const shown of desktopNotices.current) shown.close();
+    desktopNotices.current.clear();
+  }, []);
   const [desktopAllowed, setDesktopAllowed] = useState(() => typeof Notification !== "undefined" && Notification.permission === "granted");
   useEffect(() => {
     document.title = allNotices.length > 0 ? `(${allNotices.length}) SinthMux` : "SinthMux";
@@ -252,14 +313,15 @@ export default function App() {
         // Android Chrome grants permission but throws on the constructor.
         try {
           const shown = new Notification(`${item.device.name} · ${item.session}`, { body: item.message || "有新提醒", tag: key });
-          shown.onclick = () => { window.focus(); openTerminal(item.device, item.session); shown.close(); };
+          desktopNotices.current.add(shown);
+          shown.onclose = () => desktopNotices.current.delete(shown);
+          shown.onclick = () => { if (api.active) { window.focus(); openTerminal(item.device, item.session); } shown.close(); };
         } catch { /* only the title count is shown */ }
       }
     }
   }, [devices.data, desktopAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
   const enableDesktop = () => { void Notification.requestPermission().then((result) => setDesktopAllowed(result === "granted")); };
 
-  async function runAction(action: () => Promise<void>) { setNotice(""); try { await action(); await queryClient.invalidateQueries(); } catch (error) { setNotice(error instanceof Error ? error.message : "操作失败"); } }
   function openDialog(action: DialogAction) {
     setDialogAction(action);
     setDialogName(action.kind === "change-role" || action.kind === "remove-member" ? action.member.name : action.kind === "create-token" ? "我的登录令牌" : "");
@@ -333,13 +395,14 @@ export default function App() {
           break;
         case "logout":
           await request("/api/v1/auth/logout", { method: "POST" });
-          setCSRF(""); setSecret(null); setActiveTerminal(null); setShowTokens(false); setShowMembers(false);
-          // Drop the previous user's cached data, not just mark it stale.
-          await queryClient.resetQueries();
-          break;
+          onLogout?.();
+          return;
       }
+      if (!api.active) return;
       setDialogAction(null);
-      await queryClient.invalidateQueries();
+      // me 属于外层缓存：空间变更和撤销当前令牌后必须显式重新核验。
+      await refreshIdentity?.();
+      if (api.active) await queryClient.invalidateQueries();
     } catch (error) {
       setDialogError(error instanceof Error ? error.message : "操作失败");
     } finally {
@@ -348,17 +411,12 @@ export default function App() {
   }
   function logout() { openDialog({ kind: "logout", hasSavedToken: tokenSaved() }); }
 
-  if (formal && me.isError) return <Login githubEnabled={status.data?.githubLoginEnabled ?? false} theme={theme} onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")} onLogin={() => { void me.refetch(); }} />;
-
   return <div className="app-frame">
-    <header className="topbar"><div className="topbar-inner">
-      <a className="brand" href="#top" aria-label="SinthMux 首页"><img className="brand-mark" src="/sinthmux-mark-transparent.png?v=3" alt="" /><strong>SinthMux</strong></a>
-      <div className="top-actions">{me.data && <span className="user-name">{me.data.user.name}</span>}<span className="hub-status"><span className={`status-dot${hubOnline ? " online" : ""}`} />Hub {hubOnline ? "在线" : status.isError ? "离线" : "连接中"}</span><button className="icon-button" type="button" title={theme === "dark" ? "切换浅色模式" : "切换深色模式"} aria-label={theme === "dark" ? "切换浅色模式" : "切换深色模式"} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? <Sun /> : <Moon />}</button></div>
-    </div></header>
+    <Topbar status={status} theme={theme} setTheme={setTheme} userName={me.data?.user.name} />
 
     <main className={`shell${activeTerminal ? " terminal-shell" : ""}`} id="top">
       {activeTerminal ? <Suspense fallback={<div className="session-note">正在打开终端…</div>}><TerminalView key={`${activeTerminal.deviceId}:${activeTerminal.session}`} {...activeTerminal} theme={theme} onBack={() => setActiveTerminal(null)} /></Suspense> : <>
-      <div className="page-heading"><div><h1>设备 <span>{items.length}</span></h1></div><button className="refresh-button" type="button" onClick={() => { void status.refetch(); void devices.refetch(); }}><RefreshCw />刷新</button></div>
+      <div className="page-heading"><div><h1>设备 <span>{items.length}</span></h1></div><button className="refresh-button" type="button" onClick={() => { void status.refetch(); void refreshIdentity?.(); void devices.refetch(); }}><RefreshCw />刷新</button></div>
       {formal && me.data && <div className="workspace-bar"><label>空间 <select ref={spaceSelect} aria-label="当前空间" value={activeSpace?.id ?? ""} onChange={(event) => setSelectedSpace(event.target.value)}><option value="" disabled>选择空间</option>{me.data.spaces.map((space) => <option value={space.id} key={space.id}>{space.name} · {space.role}</option>)}</select></label><button type="button" onClick={() => openDialog({ kind: "create-space" })}>新建空间</button>{activeSpace && (activeSpace.role === "owner" || activeSpace.role === "admin") && <button type="button" onClick={() => openDialog({ kind: "create-device" })}>添加设备</button>}{activeSpace && <button type="button" onClick={() => setShowMembers(!showMembers)}>成员</button>}{activeSpace?.kind === "team" && activeSpace.role === "owner" && <button type="button" className="danger-text" onClick={() => openDialog({ kind: "delete-space", space: activeSpace, deviceCount: items.length })}>删除空间</button>}<button type="button" onClick={() => setShowTokens(!showTokens)}>登录令牌</button><button type="button" onClick={logout}>退出</button></div>}
       {formal && showMembers && activeSpace && <div className="management-panel"><div className="management-heading"><strong>成员</strong>{me.data?.user.githubId && <span>我的 GitHub ID：{me.data.user.githubId}</span>}{activeSpace.role === "owner" && <><button type="button" onClick={() => openDialog({ kind: "add-member" })}>添加令牌成员</button><button type="button" onClick={() => openDialog({ kind: "add-github-member" })}>添加 GitHub 成员</button></>}</div>{members.data?.members.map((member) => <div className="management-row" key={member.userId}><span>{member.name} · {member.role}</span>{activeSpace.role === "owner" && member.role !== "owner" && <><button type="button" onClick={() => openDialog({ kind: "change-role", member })}>修改角色</button><button type="button" onClick={() => openDialog({ kind: "remove-member", member })}>移除</button></>}</div>)}</div>}
       {formal && showTokens && <div className="management-panel"><div className="management-heading"><strong>我的登录令牌</strong><button type="button" onClick={() => openDialog({ kind: "create-token" })}>新建令牌</button></div>{tokens.data?.tokens.map((token) => <div className="management-row" key={token.id}><span>{token.name} · {new Date(token.expiresAt).toLocaleDateString()}</span><button type="button" onClick={() => openDialog({ kind: "revoke-token", token })}>撤销</button></div>)}</div>}
