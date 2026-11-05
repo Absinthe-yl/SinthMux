@@ -11,7 +11,7 @@ set -euo pipefail
 TMUX_VERSION=3.5a
 LIBEVENT_VERSION=2.1.12
 LINUX_TMUX_RELEASE=v3.5i
-PSMUX_VERSION=v3.3.8
+PSMUX_VERSION=v3.4.0
 MACOS_MIN=11.0
 
 root="$(cd "$(dirname "$0")/.." && pwd)"

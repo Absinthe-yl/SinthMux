@@ -83,10 +83,14 @@ function Install-WingetTmux {
 }
 
 $tmux = Find-Psmux
-if (-not $tmux -and (Test-Tmux (Join-Path $dir 'tmux.exe'))) { $tmux = Join-Path $dir 'tmux.exe' }
 if (-not $tmux) {
-  Write-Host '未检测到 tmux（Windows 版 psmux），正在从 Hub 获取…'
+  $bundled = Join-Path $dir 'tmux.exe'
+  Write-Host '正在从 Hub 获取或更新 tmux（Windows 版 psmux）…'
+  # Prefer a fresh Hub bundle over the copy installed earlier; re-running the
+  # command must upgrade psmux, not keep an outdated input path. The previous
+  # copy stays usable if the Hub download fails.
   $tmux = Install-BundledTmux
+  if (-not $tmux -and (Test-Tmux $bundled)) { $tmux = $bundled }
   if (-not $tmux) { $tmux = Install-WingetTmux }
   if (-not $tmux) { Fail 'tmux 安装未完成。请运行 winget install psmux 后重新运行这条接入命令。' }
   Write-Host "已就绪：$(& $tmux -V)（$tmux）"

@@ -137,7 +137,7 @@ Docker 启动脚本会自动生成 `SINTHMUX_PROXY_SECRET`，让 Caddy 和 Hub �
 
 **还能在本机终端使用原会话吗？** 可以。在运行 tmux 的设备上执行 `tmux attach -t '=会话名'`。
 
-**支持哪些设备？** macOS 11+、Linux 和 Windows 10 1809+ / Windows 11，x86-64 与 ARM64。Windows 上的会话由 psmux 保存，用 ConPTY 接入网页终端，可用 `tmux attach -t 会话名` 在本机 PowerShell 中接续。浏览器端可从能够访问 Hub 的任意设备使用。
+**支持哪些设备？** macOS 11+、Linux 和 Windows 10 1809+ / Windows 11，x86-64 与 ARM64。Windows 上的会话由 psmux 保存，用 ConPTY 接入网页终端，可用 `tmux attach -t 会话名` 在本机 PowerShell 中接续。浏览器端可从能够访问 Hub 的任意设备使用。Windows 请使用 psmux 3.4.0 或更新版本；旧版在机器速度的连续输入下可能丢字符。使用 Hub 随附版本时，重新执行接入命令会重新下载并替换；系统自行安装的 psmux 需通过其安装方式更新。
 
 ## 参与项目
 
