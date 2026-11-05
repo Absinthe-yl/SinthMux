@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -54,7 +55,7 @@ func TestPairSavesCredentialOnce(t *testing.T) {
 		t.Fatalf("saved config: %+v %v", saved, err)
 	}
 	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0600 {
+	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0600) {
 		t.Fatalf("config permissions: %v %v", info, err)
 	}
 	if err := pair(args); err == nil {
@@ -127,7 +128,7 @@ func TestPairReplacesRevokedCredential(t *testing.T) {
 		t.Fatalf("replacement config: %+v %v", saved, err)
 	}
 	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0600 {
+	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0600) {
 		t.Fatalf("replacement permissions: %v %v", info, err)
 	}
 	if pairRequests != 2 {

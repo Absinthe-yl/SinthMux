@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -118,8 +119,9 @@ func TestPairWithCertificateAndRenew(t *testing.T) {
 	if err != nil || saved.DeviceToken != "" || saved.DeviceKey == "" || saved.DeviceCertificate == "" {
 		t.Fatalf("certificate config: %+v %v", saved, err)
 	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0600 {
-		t.Fatalf("config permissions: %v %v", info, err)
+	info, statErr := os.Stat(path)
+	if statErr != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0600) {
+		t.Fatalf("config permissions: %v %v", info, statErr)
 	}
 	if valid, err := existingCredentialValid(saved); err != nil || !valid {
 		t.Fatalf("certificate proof rejected: %v %v", valid, err)
@@ -163,7 +165,7 @@ func TestLegacyTokenUpgradesToCertificate(t *testing.T) {
 		t.Fatalf("legacy upgrade: %+v %v upgrades=%d", saved, err, hub.upgrades)
 	}
 	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0600 {
+	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0600) {
 		t.Fatalf("upgraded config permissions: %v %v", info, err)
 	}
 }

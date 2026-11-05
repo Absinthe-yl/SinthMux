@@ -6,13 +6,16 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -97,9 +100,12 @@ func TestUploadRoundTrip(t *testing.T) {
 	if err != nil || !bytes.Equal(got, data) {
 		t.Fatalf("content mismatch: %v", err)
 	}
-	info, _ := os.Stat(path)
-	dirInfo, _ := os.Stat(filepath.Dir(path))
-	if info.Mode().Perm() != 0o600 || dirInfo.Mode().Perm() != 0o700 {
+	info, statErr := os.Stat(path)
+	dirInfo, dirStatErr := os.Stat(filepath.Dir(path))
+	if statErr != nil || dirStatErr != nil {
+		t.Fatalf("stat uploaded paths: file=%v dir=%v", statErr, dirStatErr)
+	}
+	if runtime.GOOS != "windows" && (info.Mode().Perm() != 0o600 || dirInfo.Mode().Perm() != 0o700) {
 		t.Fatalf("modes file=%v dir=%v", info.Mode().Perm(), dirInfo.Mode().Perm())
 	}
 	entries, _ := os.ReadDir(filepath.Dir(path))
@@ -137,6 +143,9 @@ func TestUploadFailuresLeaveNoPartialFile(t *testing.T) {
 func TestUploadDirRefusesSymlink(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Symlink(t.TempDir(), filepath.Join(dir, "uploads")); err != nil {
+		if runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(1314)) {
+			t.Skip("Windows symlink privilege is unavailable")
+		}
 		t.Fatal(err)
 	}
 	t.Setenv("SINTHMUX_UPLOAD_DIR", filepath.Join(dir, "uploads"))
