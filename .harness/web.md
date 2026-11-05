@@ -42,4 +42,4 @@ Web 位于 `apps/web/`，使用 React 19、TypeScript、Vite、React Query 和 x
 - 导出：`api.ts` 的 `downloadHistory`，校验独立的 `X-Sinthmux-Export-Size`（避免压缩长度误差）后用 Blob 下载。
 - 提醒：设备列表每 5 秒轮询带回 `notifications`；设备卡角标、会话行彩色左边线和消息、标题 `(N) SinthMux`、授权后的桌面通知。
 - `prefs.ts`：按用户隔离的 localStorage（`sinthmux:v1:<userId>:pinned|expanded|space`）。置顶区复用 `useSessions` 缓存；重命名迁移置顶，关闭/批量关闭取消置顶。
-- E2E 用的 `data-testid` 见 `docs/TIER1_DESIGN.md` 第 4–8 节，修改时同步 `tests/e2e/browser.sh`。
+- E2E 用的 `data-testid` 以 `tests/e2e/browser.sh`、`tests/e2e/windows-browser.mjs` 和 `apps/web/src/__tests__/` 中的实际选择器为准，修改页面标记时同步这些脚本。

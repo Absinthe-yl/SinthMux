@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Browser end-to-end checks (B1–B14 in docs/TIER1_DESIGN.md), driven with
+# Browser end-to-end checks (B1–B14), driven with
 # agent-browser against the stack started by tests/e2e/tier1.sh. WEB is the
 # stall proxy in front of Vite, so B10 can freeze the live terminal connection.
 #

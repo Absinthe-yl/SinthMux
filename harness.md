@@ -24,7 +24,7 @@ Connector (Go) ───── tmux / PTY ───── 终端中的用户程�
 
 - **正式模式**：设置 `SINTHMUX_DATABASE_URL` 后启用数据库、用户登录、空间角色和设备凭据；Web 与 Hub 通常由 Docker Compose 启动，设备代理在 tmux 所在机器原生运行。
 - **本机开发模式**：不设置数据库地址时，Hub 仅允许绑定 loopback，以开发令牌接受设备代理，Web 不要求登录。
-- **当前边界**：一次性设备配对、设备证书、浏览器终端票据和公网 HTTPS 接入路径已有实现。设备代理用本机 P-256 私钥和 Hub 签发的 24 小时证书，在 WebSocket 握手中签名一次性 nonce 证明身份（见 [ADR-0003](docs/adr/0003-device-certificate.md)）；这是应用层持有证明，不是 TLS 层 mTLS，因此可经过 Nginx/Caddy 终结 TLS。`proto/sinthmux/v1/connector.proto` 尚未接入运行时，当前消息使用 `pkg/protocol/messages.go` 中的 JSON envelope。Hub 是可信中继，可以看到终端明文。
+- **当前边界**：一次性设备配对、设备证书、浏览器终端票据和公网 HTTPS 接入路径已有实现。设备代理用本机 P-256 私钥和 Hub 签发的 24 小时证书，在 WebSocket 握手中签名一次性 nonce 证明身份（见 [`.harness/auth-storage.md`](.harness/auth-storage.md)）；这是应用层持有证明，不是 TLS 层 mTLS，因此可经过 Nginx/Caddy 终结 TLS。`proto/sinthmux/v1/connector.proto` 尚未接入运行时，当前消息使用 `pkg/protocol/messages.go` 中的 JSON envelope。Hub 是可信中继，可以看到终端明文。
 
 ## 按任务选择文档
 
@@ -63,4 +63,4 @@ Connector (Go) ───── tmux / PTY ───── 终端中的用户程�
 - 设备接入：`App.tsx` → `internal/auth/http.go` 配对接口（CSR 换证书）→ `apps/connector/pair.go` → `auth.Server.AuthenticateConnector` → `relay.ConnectorHandler`。
 - 权限：正式模式的 HTTP 请求由 `auth.Server.Require` 与 `auth.Server.Device` 校验；终端 WebSocket 另由票据绑定浏览器会话并复核权限。
 
-`README.md` 负责用户用法，`docs/` 中的方案和 ADR 记录设计背景；本 Harness 负责让编码工具快速找到现有实现及其验证入口。设计文档中的目标能力不自动代表当前已实现。
+`README.md` 负责用户用法，本 Harness 和 `.harness/` 负责让编码工具快速找到现有实现及其验证入口；设计背景以当前代码、配置和测试为准，仓库内的 `docs/` 被 Git 忽略，不在克隆中出现。索引或表格描述的目标能力不自动代表当前已实现。
