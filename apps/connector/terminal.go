@@ -18,8 +18,15 @@ type terminalProcess interface {
 }
 
 type terminalStream struct {
-	pty    terminalProcess
-	cancel context.CancelFunc
+	pty        terminalProcess
+	cancel     context.CancelFunc
+	closeOnce  sync.Once
+	reportOnce sync.Once
+}
+
+func (t *terminalStream) close() {
+	t.cancel()
+	t.closeOnce.Do(func() { _ = t.pty.Close() })
 }
 
 type terminalStreams struct {
@@ -65,8 +72,7 @@ func (s *terminalStreams) open(request *protocol.StreamOpen) {
 			if count > 0 {
 				data := append([]byte(nil), buffer[:count]...)
 				if s.send(protocol.Envelope{Version: protocol.Version, Type: protocol.MessageStreamData, StreamData: &protocol.StreamData{StreamID: request.StreamID, Data: data}}) != nil {
-					cancel()
-					_ = file.Close()
+					s.terminate(request.StreamID, stream, "terminal output failed: send", true)
 					break
 				}
 			}
@@ -82,15 +88,48 @@ func (s *terminalStreams) open(request *protocol.StreamOpen) {
 		}
 		s.mu.Unlock()
 		if current == stream {
-			s.reportClose(request.StreamID, "terminal exited")
+			s.reportCloseOnce(stream, request.StreamID, "terminal exited")
 		}
-		cancel()
-		_ = file.Close()
+		stream.close()
 	}()
 }
 
 func (s *terminalStreams) reportClose(id, reason string) {
 	_ = s.send(protocol.Envelope{Version: protocol.Version, Type: protocol.MessageStreamClose, StreamClose: &protocol.StreamClose{StreamID: id, Reason: reason}})
+}
+
+func (s *terminalStreams) reportCloseOnce(stream *terminalStream, id, reason string) {
+	stream.reportOnce.Do(func() { s.reportClose(id, reason) })
+}
+
+func (s *terminalStreams) terminate(id string, stream *terminalStream, reason string, notify bool) {
+	s.mu.Lock()
+	owned := s.active[id] == stream
+	if owned {
+		delete(s.active, id)
+	}
+	s.mu.Unlock()
+	stream.close()
+	if notify && owned {
+		s.reportCloseOnce(stream, id, reason)
+	}
+}
+
+func writeAll(w io.Writer, data []byte) error {
+	for len(data) > 0 {
+		n, err := w.Write(data)
+		if n < 0 || n > len(data) {
+			return fmt.Errorf("invalid terminal write count %d", n)
+		}
+		data = data[n:]
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
 }
 
 func (s *terminalStreams) input(data *protocol.StreamData) {
@@ -100,8 +139,11 @@ func (s *terminalStreams) input(data *protocol.StreamData) {
 	s.mu.Lock()
 	stream := s.active[data.StreamID]
 	s.mu.Unlock()
-	if stream != nil {
-		_, _ = stream.pty.Write(data.Data)
+	if stream == nil {
+		return
+	}
+	if err := writeAll(stream.pty, data.Data); err != nil {
+		s.terminate(data.StreamID, stream, "terminal input failed: "+err.Error(), true)
 	}
 }
 
@@ -123,8 +165,7 @@ func (s *terminalStreams) close(id string) {
 	delete(s.active, id)
 	s.mu.Unlock()
 	if stream != nil {
-		stream.cancel()
-		_ = stream.pty.Close()
+		s.terminate(id, stream, "terminal closed", false)
 	}
 }
 
@@ -133,8 +174,7 @@ func (s *terminalStreams) closeAll() {
 	streams := s.active
 	s.active = make(map[string]*terminalStream)
 	s.mu.Unlock()
-	for _, stream := range streams {
-		stream.cancel()
-		_ = stream.pty.Close()
+	for id, stream := range streams {
+		s.terminate(id, stream, "terminal closed", false)
 	}
 }
