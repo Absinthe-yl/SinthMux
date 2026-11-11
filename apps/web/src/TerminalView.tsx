@@ -7,6 +7,7 @@ import { APIError } from "./api";
 import { useAPI } from "./QueryScope";
 import { insertPaths, pasteFiles } from "./paste";
 import { stateText, TerminalConnection, type ConnectionState } from "./terminalConnection";
+import { keepCompositionVisible } from "./imeAnchor";
 import { attachMobileInput } from "./mobileInput";
 import { consumeModifiers, keySequence, modifyText, nextModifier, noModifiers, type Modifiers, type SpecialKey } from "./terminalKeys";
 
@@ -159,9 +160,10 @@ export default function TerminalView({ deviceId, deviceName, session, theme, cap
     textarea?.setAttribute("autocorrect", "off");
     textarea?.setAttribute("spellcheck", "false");
     let detachMobileInput = () => {};
+    const composition = keepCompositionVisible(term, host.current);
     const connection = new TerminalConnection(deviceId, session, {
       onState: (next) => { setConnection(next); if (next.kind !== "live") setTransfer(""); },
-      onOutput: (data) => term.write(data),
+      onOutput: (data) => { composition.trackOutput(data); term.write(data); },
       onReset: () => term.reset(),
       size: () => ({ cols: term.cols, rows: term.rows })
     }, request);
@@ -187,6 +189,9 @@ export default function TerminalView({ deviceId, deviceName, session, theme, cap
       send(output);
     };
     const onInput = term.onData(typed);
+    // Typing before clicking the surface used to go nowhere; on touch devices
+    // focus would raise the keyboard on its own terms, so leave those alone.
+    if (!touchDevice) term.focus();
     if (touchDevice && textarea) {
       detachMobileInput = attachMobileInput(host.current, textarea, {
         onText: (text) => { for (const char of text) typed(char); term.scrollToBottom(); },
@@ -220,7 +225,7 @@ export default function TerminalView({ deviceId, deviceName, session, theme, cap
       surface.removeEventListener("paste", onPaste, true);
       surface.removeEventListener("dragover", onDragOver);
       surface.removeEventListener("drop", onDrop);
-      observer.disconnect(); onInput.dispose(); detachMobileInput();
+      observer.disconnect(); onInput.dispose(); detachMobileInput(); composition.dispose();
       sendRef.current = () => {}; fitRef.current = () => {}; terminal.current = null; term.dispose();
     };
   }, [deviceId, session, canUpload, request]);
