@@ -13,5 +13,5 @@ GitHub 访问令牌用于 Broker 向 GitHub 查询身份，不作为 Hub 的登�
 ## 配置和验证
 
 - Broker：`SINTHMUX_BROKER_PUBLIC_URL`、`SINTHMUX_BROKER_SIGNING_SEED`、`SINTHMUX_GITHUB_CLIENT_ID`、`SINTHMUX_GITHUB_CLIENT_SECRET`；Compose 见 `deploy/login-broker.compose.yml`。
-- Hub：`SINTHMUX_AUTH_BROKER_URL`、`SINTHMUX_AUTH_BROKER_PUBLIC_KEY`、`SINTHMUX_PUBLIC_URL`；具体示例见 `README.md`。
+- Hub：`SINTHMUX_AUTH_BROKER_URL`、`SINTHMUX_AUTH_BROKER_PUBLIC_KEY`、`SINTHMUX_PUBLIC_URL`；示例见 `deploy/login-broker.compose.yml` 与 `deploy/docker-compose.yml`。
 - 测试：`internal/loginbroker/server_test.go`、`internal/auth/auth_test.go` 的 Broker 路径。票据格式与验签在 `internal/auth/broker_ticket.go`。

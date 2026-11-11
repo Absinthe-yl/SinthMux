@@ -8,7 +8,7 @@
 
 `make docker-up` 调用 `scripts/docker-up.sh`，使用 `deploy/docker-compose.yml` 构建 PostgreSQL、Hub 和 Web。`deploy/Caddyfile` 将 `/api`、`/ws`、`/health`、安装与下载路径转给 Hub，其余路径作为 Web 静态资源。默认 Web 与 Hub 端口只绑定本机。首次初始化会把临时 Owner 用户令牌写入被 Git 忽略的 `deploy/.bootstrap-token`；数据库密码在 `deploy/.env.local`。设备代理不在 Compose 中，应在运行 tmux 的机器上安装。Hub 镜像会把 `deploy/bundles/`（Git 忽略，由 `scripts/build-tmux-bundles.sh` 在 Mac 上生成）中的随附 tmux 打包进 `/downloads`；目录为空也能构建。
 
-公网接入需能访问的 HTTPS 入口和正确的 `SINTHMUX_PUBLIC_URL`，详见 `README.md` 的“公网部署提示”和 [`architecture.md`](architecture.md)。
+公网接入需能访问的 HTTPS 入口和正确的 `SINTHMUX_PUBLIC_URL`，详见 `OPERATIONS.md` 的“公网部署”和 [`architecture.md`](architecture.md)。
 
 服务器上没有其他 Web 服务时，可叠加 `deploy/docker-compose.public.yml`：Web 容器的 Caddy 改用 `deploy/Caddyfile.public` 监听 80/443 并自动申请 Let's Encrypt 证书，Hub 不再映射宿主机端口。`deploy/.env.local` 需设置 `SINTHMUX_SITE`（域名列表或公网 IP）和 `SINTHMUX_PUBLIC_URL`；仅用 IP 访问时还需 `SINTHMUX_ACME_PROFILE=shortlived`，Let's Encrypt 只给 IP 签 6 天短期证书，由 Caddy 自动续期。
 
