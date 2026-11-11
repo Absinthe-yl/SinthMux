@@ -229,7 +229,9 @@ func (t *terminal) waitFor(pattern *regexp.Regexp, timeout time.Duration) ([]str
 	}
 }
 
-var powershellPromptPattern = regexp.MustCompile(`(?m)^PS[ \t]+[^\r\n>]*>[ \t]*(?:\r?\n)?$`)
+// Prompt modifiers such as conda's "(base)" prefix the real prompt line, so
+// match PS anywhere at the start of a line ahead of the drive path.
+var powershellPromptPattern = regexp.MustCompile(`(?m)^(?:[^\r\n]*?[ \t])?PS[ \t]+[^\r\n>]*>[ \t]*(?:\r?\n)?$`)
 
 // waitForPowerShellPrompt waits for the interactive PowerShell prompt without sending input.
 func (t *terminal) waitForPowerShellPrompt(timeout time.Duration) bool {
@@ -727,7 +729,9 @@ func (s *screen) csi(final byte) {
 			}
 		}
 	case 't':
-		if op := n(0, 0); op != 22 && op != 23 {
+		// psmux asks the client to resize the window (8t); this parser only
+		// emulates appearance, and the screen is sized by explicit resize frames.
+		if op := n(0, 0); op != 8 && op != 22 && op != 23 {
 			s.err = fmt.Errorf("unsupported window operation %d", op)
 		}
 	default:
