@@ -21,35 +21,45 @@ function contains(haystack: Uint8Array, needle: number[]): boolean {
 export function keepCompositionVisible(term: Terminal, host: HTMLElement): { trackOutput: (data: string | Uint8Array) => void; dispose: () => void } {
   let hidden = false;
   let frame = 0;
+  // Where the app last drew its own cursor while it was still visible; that is
+  // the input caret for TUIs which hide the cursor afterwards.
+  let lastVisible = { x: 0, y: 0 };
 
   const trackOutput = (data: string | Uint8Array) => {
     const hid = typeof data === "string" ? data.includes("\x1b[?25l") : contains(data, HIDE);
     const shown = typeof data === "string" ? data.includes("\x1b[?25h") : contains(data, SHOW);
     if (hid) hidden = true;
     if (shown) hidden = false;
+    if (!hidden) {
+      const buffer = term.buffer.active;
+      lastVisible = { x: buffer.cursorX, y: buffer.cursorY };
+    }
   };
 
   const anchor = () => {
     const rows = term.rows;
+    const cols = term.cols;
     const screen = host.querySelector<HTMLElement>(".xterm-screen");
     const view = host.querySelector<HTMLElement>(".composition-view");
     const area = host.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
     if (!screen || !view || rows < 2) return;
-    const cellHeight = screen.getBoundingClientRect().height / rows;
-    const buffer = term.buffer.active;
-    // The final row is the tmux status line, never the app's input.
-    for (let y = rows - 2; y >= 0; y--) {
-      const line = buffer.getLine(buffer.baseY + y);
-      if (!line || line.translateToString(true).trim() === "") continue;
-      // The blank line under the content clears the app's own hint text.
-      const target = Math.min(y + 1, rows - 2);
-      const top = `${Math.round(target * cellHeight)}px`;
-      if (view.style.top !== top || view.style.left !== "0px") { view.style.top = top; view.style.left = "0px"; }
-      if (area) {
-        if (area.style.top !== top || area.style.left !== "0px") { area.style.top = top; area.style.left = "0px"; }
+    const box = screen.getBoundingClientRect();
+    const cellHeight = box.height / rows;
+    const cellWidth = box.width / cols;
+    let target = lastVisible.y;
+    let column = lastVisible.x;
+    // Fold back to the last content row if the remembered spot is unusable.
+    if (target >= rows - 1 || (target === 0 && lastVisible.x === 0)) {
+      const buffer = term.buffer.active;
+      for (let y = rows - 2; y >= 0; y--) {
+        const line = buffer.getLine(buffer.baseY + y);
+        if (line && line.translateToString(true).trim() !== "") { target = Math.min(y + 1, rows - 2); column = 0; break; }
       }
-      return;
     }
+    const top = `${Math.round(target * cellHeight)}px`;
+    const left = `${Math.round(column * cellWidth)}px`;
+    if (view.style.top !== top || view.style.left !== left) { view.style.top = top; view.style.left = left; }
+    if (area && (area.style.top !== top || area.style.left !== left)) { area.style.top = top; area.style.left = left; }
   };
 
   // xterm repositions the preedit on every render, so hold our spot each frame
