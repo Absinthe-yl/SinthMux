@@ -5,7 +5,8 @@
 #             statically, ncurses from the OS; needs macOS with Xcode CLT
 #   Windows : psmux (a native tmux-compatible multiplexer) tmux.exe (x64, arm64)
 # Output goes to deploy/bundles/ (ignored by Git) with SHA256SUMS; the Hub
-# image copies that directory. Set HTTPS_PROXY if GitHub is slow.
+# image copies that directory. Set HTTPS_PROXY if GitHub is slow, or
+# SINTHMUX_GITHUB_MIRROR (e.g. https://gh-proxy.com/) if releases are unreachable.
 set -euo pipefail
 
 TMUX_VERSION=3.5a
@@ -19,7 +20,8 @@ out="$root/deploy/bundles"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$out"
-fetch() { curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 20 -o "$2" "$1"; }
+mirror="${SINTHMUX_GITHUB_MIRROR:-}"
+fetch() { curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 20 -o "$2" "$mirror$1"; }
 
 printf '== Linux tmux (%s)\n' "$LINUX_TMUX_RELEASE"
 for arch in amd64 arm64; do
