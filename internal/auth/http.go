@@ -720,15 +720,26 @@ func (s *Server) githubCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	values := url.Values{"client_id": {s.OAuth.ClientID}, "client_secret": {s.OAuth.ClientSecret}, "code": {code}, "redirect_uri": {strings.TrimRight(s.OAuth.PublicURL, "/") + "/api/v1/auth/github/callback"}, "code_verifier": {transaction.Verifier}}
-	req, err := http.NewRequestWithContext(r.Context(), "POST", s.OAuth.TokenURL, strings.NewReader(values.Encode()))
-	if err != nil {
+	// GitHub routes are periodically unreachable from mainland-hosted hubs,
+	// usually recovering within seconds, so each call retries within a bound.
+	githubCtx, cancelGitHub := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancelGitHub()
+	if _, err := http.NewRequestWithContext(githubCtx, "POST", s.OAuth.TokenURL, strings.NewReader("")); err != nil {
 		respond(w, 500, map[string]string{"error": "OAuth request failed"})
 		return
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
 	client := &http.Client{Timeout: 10 * time.Second}
-	response, err := client.Do(req)
+	// The authorization code is single-use; a retry only helps when an attempt
+	// failed before GitHub saw it, which is the common blocked-route case.
+	response, err := doWithRetry(githubCtx, client, func(ctx context.Context) (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, "POST", s.OAuth.TokenURL, strings.NewReader(values.Encode()))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "application/json")
+		return req, nil
+	})
 	if err != nil {
 		respond(w, 502, map[string]string{"error": "GitHub unavailable"})
 		return
@@ -742,14 +753,19 @@ func (s *Server) githubCallback(w http.ResponseWriter, r *http.Request) {
 		respond(w, 502, map[string]string{"error": "GitHub authorization failed"})
 		return
 	}
-	request, err := http.NewRequestWithContext(r.Context(), "GET", s.OAuth.UserURL, nil)
-	if err != nil {
+	if _, err := http.NewRequestWithContext(githubCtx, "GET", s.OAuth.UserURL, nil); err != nil {
 		respond(w, 500, map[string]string{"error": "GitHub request failed"})
 		return
 	}
-	request.Header.Set("Authorization", "Bearer "+exchange.AccessToken)
-	request.Header.Set("Accept", "application/vnd.github+json")
-	profile, err := client.Do(request)
+	profile, err := doWithRetry(githubCtx, client, func(ctx context.Context) (*http.Request, error) {
+		request, err := http.NewRequestWithContext(ctx, "GET", s.OAuth.UserURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		request.Header.Set("Authorization", "Bearer "+exchange.AccessToken)
+		request.Header.Set("Accept", "application/vnd.github+json")
+		return request, nil
+	})
 	if err != nil {
 		respond(w, 502, map[string]string{"error": "GitHub unavailable"})
 		return
@@ -776,4 +792,30 @@ func (s *Server) githubCallback(w http.ResponseWriter, r *http.Request) {
 	s.setCookie(w, secret)
 	s.Store.Audit(r.Context(), user.ID, "", user.ID, "auth.github_login", "ok")
 	http.Redirect(w, r, s.OAuth.PublicURL, http.StatusFound)
+}
+
+// doWithRetry runs a GitHub call up to three times, backing off between
+// transport errors. The build callback issues a fresh request per attempt so
+// bodies and headers stay intact, and ctx caps the total wait.
+func doWithRetry(ctx context.Context, client *http.Client, build func(context.Context) (*http.Request, error)) (*http.Response, error) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt) * 400 * time.Millisecond):
+			}
+		}
+		request, err := build(ctx)
+		if err != nil {
+			return nil, err
+		}
+		response, err := client.Do(request)
+		if err == nil {
+			return response, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
 }
