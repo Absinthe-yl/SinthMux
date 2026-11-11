@@ -41,7 +41,9 @@ export function keepCompositionVisible(term: Terminal, host: HTMLElement): { tra
     for (let y = rows - 2; y >= 0; y--) {
       const line = buffer.getLine(buffer.baseY + y);
       if (!line || line.translateToString(true).trim() === "") continue;
-      const top = `${Math.round(y * cellHeight)}px`;
+      // The blank line under the content clears the app's own hint text.
+      const target = Math.min(y + 1, rows - 2);
+      const top = `${Math.round(target * cellHeight)}px`;
       if (view.style.top !== top || view.style.left !== "0px") { view.style.top = top; view.style.left = "0px"; }
       if (area) {
         if (area.style.top !== top || area.style.left !== "0px") { area.style.top = top; area.style.left = "0px"; }
