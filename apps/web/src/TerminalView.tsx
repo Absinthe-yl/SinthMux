@@ -163,7 +163,7 @@ export default function TerminalView({ deviceId, deviceName, session, theme, cap
     const composition = keepCompositionVisible(term, host.current);
     const connection = new TerminalConnection(deviceId, session, {
       onState: (next) => { setConnection(next); if (next.kind !== "live") setTransfer(""); },
-      onOutput: (data) => { term.write(data, () => composition.sample()); composition.trackOutput(data); },
+      onOutput: (data) => { term.write(data); composition.trackOutput(data); },
       onReset: () => term.reset(),
       size: () => ({ cols: term.cols, rows: term.rows })
     }, request);
